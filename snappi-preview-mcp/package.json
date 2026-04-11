@@ -1,0 +1,20 @@
+{
+  "name": "snappi-preview-mcp",
+  "version": "1.0.0",
+  "description": "MCP server: clone PR, detect stack, install deps, start dev preview (Snappi Step 1 / sidecar engine).",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["mcp", "snappi", "github", "pr"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  }
+}

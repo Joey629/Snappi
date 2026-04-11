@@ -1,0 +1,16 @@
+# Podman: `podman compose up -d --build` (same file format as Docker Compose)
+# SNAPPI_BASE_IMAGE: optional; must be ASCII (real registry/path:tag), e.g.
+#   SNAPPI_BASE_IMAGE=docker.m.daocloud.io/library/node:20-alpine
+services:
+  snappi:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${SNAPPI_BASE_IMAGE:-node:20-alpine}
+    ports:
+      - "${SNAPPI_HOST_PORT:-3000}:3000"
+    environment:
+      # 可选：提高 GitHub API 限额、访问私有仓库
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # 可选：启动后直接加载该 Issue（也可在页面里粘贴）
+      ISSUE_URL: ${ISSUE_URL:-}

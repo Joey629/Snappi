@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Snappi</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      if (location.protocol === "file:") {
+        document.documentElement.classList.add("snappi-desktop");
+        const v = document.querySelector('meta[name="viewport"]');
+        if (v) {
+          v.setAttribute(
+            "content",
+            "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no"
+          );
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <!-- Fixed over the preview pane (BrowserView starts below this bar in main process) -->
+    <div
+      id="previewTabsBar"
+      class="preview-tabs-bar"
+      hidden
+      aria-label="Preview tabs"
+    >
+      <div class="preview-tabs-bar__strip">
+        <div
+          id="previewTabs"
+          class="preview-tabs preview-tabs--browser"
+          role="tablist"
+        ></div>
+      </div>
+    </div>
+    <div
+      id="previewPrMetaBar"
+      class="preview-pr-meta-bar"
+      hidden
+      aria-label="Active pull request"
+    >
+      <div class="preview-pr-meta-bar__inner">
+        <h2 class="preview-pr-meta-bar__title" id="previewPrMetaTitle"></h2>
+        <p class="preview-pr-meta-bar__desc" id="previewPrMetaBody"></p>
+        <div class="preview-pr-meta-bar__row">
+          <button
+            type="button"
+            class="preview-pr-meta-bar__gh"
+            id="previewPrMetaLinkBtn"
+          >
+            Open PR on GitHub
+          </button>
+          <button
+            type="button"
+            class="btn btn-outline-primary preview-pr-meta-bar__inspect"
+            id="btnInspectorToggle"
+            aria-pressed="false"
+          >
+            Inspector mode
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="app">
+      <div id="viewHome" class="app-view">
+        <main class="app-main">
+          <div class="shell-panel-body" id="shellPanelBody">
+          <section class="hero">
+            <img
+              class="hero__logo"
+              src="./assets/snappi-mark.svg"
+              width="56"
+              height="56"
+              alt=""
+            />
+            <h1 class="hero__title">Snappi</h1>
+            <p class="hero__sub">UI Review &amp; Design Walkthroughs</p>
+          </section>
+
+          <section class="card" id="prPreviewCard">
+            <label class="field-label" for="prUrlLine0"
+              >GITHUB PR URL<span class="field-label__muted">(s)</span></label
+            >
+            <p class="field-hint field-hint--tight" id="prUrlsFieldHint">
+              Enter GitHub PR URLs (max 5). Press Enter for a new line.<br />
+              Only Open/Merged PRs are supported.
+            </p>
+            <div class="pr-urls-editor" id="prUrlsEditor">
+              <div class="pr-urls-editor__rows" id="prUrlsRows"></div>
+            </div>
+            <p class="field-hint" id="urlHintWeb" hidden>
+              In this browser tab, fetch the thread from GitHub via the local
+              server. Examples: <code>.../pull/1</code> and <code>.../issues/1</code>
+            </p>
+            <button
+              type="button"
+              class="btn btn-primary btn-block"
+              id="btnWebLoad"
+              hidden
+            >
+              Load thread
+            </button>
+            <div id="prPreviewDesktopBlock" hidden>
+              <div class="btn-row pr-preview__run-row">
+                <button
+                  type="button"
+                  class="btn btn-primary flex-1"
+                  id="btnPrPreview"
+                >
+                  Run PR dev server(s)
+                </button>
+              </div>
+              <p
+                id="prPreviewError"
+                class="pr-preview-error"
+                hidden
+                role="alert"
+              ></p>
+              <p class="field-hint field-hint--tight" id="prPreviewStatus" hidden></p>
+              <pre
+                class="container-log"
+                id="prPreviewLog"
+                hidden
+                aria-label="PR preview output"
+              ></pre>
+            </div>
+          </section>
+
+          <section class="card pr-changed-card" id="prChangedFilesCard" hidden>
+            <h2 class="pr-changed-card__title">What changed</h2>
+            <p class="pr-changed-card__ux-summary" id="prChangedUxSummary" hidden></p>
+            <ul
+              class="pr-changed-card__ui-list"
+              id="prChangedUiHints"
+              hidden
+              aria-label="Legacy diff hints"
+            ></ul>
+            <details class="pr-changed-card__pf" id="prPatternFlyPrBlock" hidden>
+              <summary class="pr-changed-card__summary">
+                PatternFly in this PR (MCP scan)
+              </summary>
+              <p class="field-hint field-hint--tight" id="prPatternFlySlugHint" hidden></p>
+              <p class="pr-patternfly-loading" id="prPatternFlyLoading" hidden>
+                Loading doc summaries from PatternFly MCP…
+              </p>
+              <p class="pr-patternfly-err" id="prPatternFlyErr" hidden></p>
+              <ul
+                class="pr-patternfly-list"
+                id="prPatternFlyList"
+                hidden
+                aria-label="PatternFly components in this pull request"
+              ></ul>
+            </details>
+            <div class="pr-changed-card__toolbar-row">
+              <div
+                class="pr-highlight-switch-wrap"
+                id="prHighlightSwitchWrap"
+                hidden
+              >
+                <span class="pr-highlight-switch__caption" id="prHighlightSwitchCaption"
+                  >Preview highlights</span
+                >
+                <label class="pr-highlight-switch">
+                  <input
+                    type="checkbox"
+                    id="prChangedHighlightSwitch"
+                    class="pr-highlight-switch__input"
+                    role="switch"
+                    aria-checked="true"
+                    aria-labelledby="prHighlightSwitchCaption"
+                    checked
+                  />
+                  <span class="pr-highlight-switch__slider" aria-hidden="true"></span>
+                </label>
+              </div>
+            </div>
+            <details class="pr-changed-card__details">
+              <summary class="pr-changed-card__summary">
+                For developers: files in this PR
+              </summary>
+              <p class="field-hint field-hint--tight" id="prChangedFilesHint"></p>
+              <ul
+                class="pr-changed-card__list"
+                id="prChangedFilesList"
+                aria-label="Files changed in this pull request"
+              ></ul>
+            </details>
+          </section>
+
+          <section class="card web-thread-card" id="webThreadPanel" hidden>
+            <h2 class="web-thread-card__title">Thread preview</h2>
+            <div class="issue-block">
+              <h3 class="issue-block__title" id="webTitle"></h3>
+              <div class="issue-block__meta" id="webMeta"></div>
+              <div class="issue-block__body md" id="webBody"></div>
+            </div>
+            <section class="comments-block">
+              <h4 class="comments-block__label">Comments</h4>
+              <ul class="comment-list" id="webCommentList"></ul>
+            </section>
+          </section>
+
+          <section class="card card--inspector" id="inspectorSessionCard" hidden>
+            <h2 class="inspector-card__title">Preview &amp; inspector</h2>
+            <div
+              class="inspector-pick-panel"
+              id="inspectorPickPanel"
+              hidden
+              aria-live="polite"
+            >
+              <div class="inspector-pick-visual">
+                <img
+                  id="inspectorPickThumb"
+                  class="inspector-pick-thumb"
+                  alt="Picked element"
+                  hidden
+                />
+                <div
+                  id="inspectorPickPlaceholder"
+                  class="inspector-pick-placeholder"
+                  role="status"
+                >
+                  No screenshot (element too small or capture failed)
+                </div>
+              </div>
+              <details class="inspector-pick-details">
+                <summary>Pick details (JSON)</summary>
+                <pre class="inspector-pick-json" id="inspectorPickJson"></pre>
+              </details>
+            </div>
+
+            <section class="pf-insights" id="pfInsightsPanel" hidden>
+              <h3 class="pf-insights__title">PatternFly review</h3>
+              <p class="field-hint field-hint--tight pf-insights__lede">
+                <strong>Who</strong> this node maps to, <strong>what failed</strong> checks
+                (MCP + heuristics), <strong>what already passes</strong> from the DOM
+                snapshot — then a comment draft. No file:line until we add source maps.
+              </p>
+              <p class="pf-insights__status" id="pfInsightsStatus" hidden></p>
+
+              <div class="pf-block pf-block--identity" id="pfIdentityBlock" hidden>
+                <h4 class="pf-block__title">Component</h4>
+                <div id="pfIdentityBody" class="pf-block__body"></div>
+              </div>
+
+              <div class="pf-block pf-block--issues" id="pfIssuesBlock" hidden>
+                <h4 class="pf-block__title">Issues</h4>
+                <p class="pf-block__empty" id="pfIssuesEmpty" hidden>
+                  No issues flagged for this pick.
+                </p>
+                <div class="pf-insights__list" id="pfInsightsList"></div>
+              </div>
+
+              <div class="pf-block pf-block--passes" id="pfPassesBlock" hidden>
+                <h4 class="pf-block__title">Looks OK (auto)</h4>
+                <ul class="pf-passes-list" id="pfPassesList"></ul>
+              </div>
+
+              <div class="pf-block pf-block--handoff" id="pfHandoffBlock">
+                <h4 class="pf-block__title">Comment draft</h4>
+                <p class="field-hint field-hint--tight pf-handoff-hint">
+                  Edit if you want, then copy. Posting to GitHub needs a token (not wired
+                  yet).
+                </p>
+                <textarea
+                  id="handoffDraftTa"
+                  class="inspector-session__textarea"
+                  rows="6"
+                  spellcheck="true"
+                  placeholder="Fills from issues + pick when MCP finishes…"
+                ></textarea>
+                <div class="pf-handoff-actions">
+                  <button type="button" class="btn btn-ghost btn-block" id="btnHandoffRefresh">
+                    Regenerate from issues
+                  </button>
+                  <button type="button" class="btn btn-primary btn-block" id="btnHandoffCopy">
+                    Copy comment text
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-block"
+                    id="btnPostGithubPr"
+                    disabled
+                    title="Requires GitHub API token (coming soon)"
+                  >
+                    Post to PR (soon)
+                  </button>
+                </div>
+              </div>
+
+              <details class="pf-insights__next-steps" id="pfInsightsNextSteps" hidden>
+                <summary>Full template + doc excerpt (for AI / archive)</summary>
+                <p class="field-hint field-hint--tight pf-insights__next-steps-hint">
+                  Longer block including MCP text — use if you need the raw doc excerpt.
+                </p>
+                <pre class="pf-insights__next-steps-pre" id="pfInsightsNextStepsPre"></pre>
+              </details>
+            </section>
+
+            <section class="ui-review-card" id="uiReviewCard" aria-labelledby="uiReviewCardTitle">
+              <h3 class="ui-review-card__title" id="uiReviewCardTitle">
+                UI review checklist
+              </h3>
+              <p class="field-hint field-hint--tight ui-review-card__lede">
+                <strong>Optional.</strong> After you pick an element: width buttons
+                shrink the preview (like a phone/tablet). Checkboxes are your own
+                sign-off—nothing is sent until you use “Copy GitHub Markdown” below.
+              </p>
+              <div class="ui-review-viewport" id="uiReviewViewportRow">
+                <span class="ui-review-viewport__label" id="uiReviewViewportLabel"
+                  >Preview width</span
+                >
+                <div class="ui-review-viewport__btns" role="group" aria-labelledby="uiReviewViewportLabel">
+                  <button type="button" class="btn btn-ghost btn--compact" data-snappi-vp="390">
+                    ~390
+                  </button>
+                  <button type="button" class="btn btn-ghost btn--compact" data-snappi-vp="768">
+                    ~768
+                  </button>
+                  <button type="button" class="btn btn-ghost btn--compact" data-snappi-vp="fill">
+                    Fill
+                  </button>
+                </div>
+              </div>
+              <details class="ui-review-manual-wrap">
+                <summary class="ui-review-manual-wrap__summary">
+                  Optional manual checklist (advanced)
+                </summary>
+                <fieldset class="ui-review-manual">
+                  <legend class="ui-review-manual__legend">Manual</legend>
+                  <ul class="ui-review-manual__list" id="uiReviewManualList"></ul>
+                </fieldset>
+              </details>
+            </section>
+
+            <div class="inspector-session" id="inspectorSessionPanel">
+              <h3 class="inspector-session__title">Session</h3>
+              <div class="inspector-session__add" id="inspectorSessionAddWrap" hidden>
+                <label class="field-label" for="sessionPickFeedback">Feedback for current pick</label>
+                <textarea
+                  id="sessionPickFeedback"
+                  class="inspector-session__textarea"
+                  rows="3"
+                  placeholder="What should change? (layout, copy, contrast, ...)"
+                  spellcheck="true"
+                ></textarea>
+                <button type="button" class="btn btn-primary btn-block" id="btnSessionAdd">
+                  Add to session
+                </button>
+              </div>
+              <ul id="inspectorSessionList" class="inspector-session-list" aria-label="Session items"></ul>
+              <div class="inspector-session__actions">
+                <button type="button" class="btn btn-ghost btn-block" id="btnSessionClear">
+                  Clear session
+                </button>
+              </div>
+              <div class="inspector-export" id="inspectorExportWrap">
+                <h4 class="inspector-export__title">Share feedback</h4>
+                <p class="field-hint field-hint--tight inspector-export__hint">
+                  Copies a Markdown block you can paste into a GitHub PR comment or a
+                  ticket. Screenshots stay local (not uploaded).
+                </p>
+                <div class="inspector-export__btns">
+                  <button type="button" class="btn btn-primary btn-block" id="btnCopyGithubMarkdown">
+                    Copy GitHub Markdown
+                  </button>
+                  <button type="button" class="btn btn-ghost btn-block" id="btnOpenPrOnGithub">
+                    Open on GitHub
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <p id="error" class="error-banner" hidden></p>
+          <p id="infoBanner" class="info-banner" hidden></p>
+          </div>
+
+          <footer class="app-footer app-footer--shell">
+            <button
+              type="button"
+              class="shell-footer-btn"
+              id="btnShellCollapse"
+              hidden
+              aria-controls="shellPanelBody"
+              aria-expanded="true"
+              aria-label="Collapse Snappi panel"
+              title="Collapse panel"
+            >
+              <svg
+                class="shell-footer-btn__icon shell-footer-btn__icon--collapse"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"
+                />
+              </svg>
+              <svg
+                class="shell-footer-btn__icon shell-footer-btn__icon--expand"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="shell-footer-btn"
+              id="linkSettings"
+              aria-label="Settings"
+              title="Settings"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96c-.52-.4-1.08-.73-1.69-.98l-.36-2.54a.48.48 0 0 0-.49-.42h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.61.25-1.17.59-1.69.98l-2.39-.96c-.22-.08-.47 0-.6.22L2.74 8.87c-.12.21-.08.47.12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.52.4 1.08.73 1.69.98l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.61-.25 1.17-.59 1.69-.98l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.48-.12-.64l-2.01-1.58zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
+                />
+              </svg>
+            </button>
+          </footer>
+        </main>
+      </div>
+
+      <div id="viewSettings" class="app-view app-view--settings" hidden>
+        <main class="app-main settings-page">
+          <button type="button" class="settings-page__back btn btn-ghost" id="btnSettingsBack">
+            ← Back
+          </button>
+          <h1 class="settings-page__title">Settings</h1>
+
+          <section class="settings-section card">
+            <h2 class="settings-section__title">GitHub API token</h2>
+            <p class="settings-section__body">
+              This app does <strong>not</strong> store a token in Settings. You
+              do not type a token here.
+            </p>
+            <p class="settings-section__body">
+              For the <strong>web</strong> workflow (<code>npm run web</code>,
+              thread preview in the browser), set the environment variable
+              <code>GITHUB_TOKEN</code> before starting the server if the API is
+              required (rate limits or private data).
+            </p>
+          </section>
+
+          <section class="settings-section card">
+            <h2 class="settings-section__title">Git &amp; private repos</h2>
+            <p class="settings-section__body">
+              <strong>Run PR dev server</strong> uses <code>git clone</code> on
+              your machine. For private repositories, configure SSH keys or
+              another credential helper so Git can access GitHub. That is
+              separate from <code>GITHUB_TOKEN</code>.
+            </p>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

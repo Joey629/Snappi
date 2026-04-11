@@ -1,0 +1,61 @@
+{
+  "name": "snappi",
+  "version": "0.1.0",
+  "description": "Snappi desktop: run a GitHub PR locally (dev UI) and review in the browser.",
+  "author": "yxing",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "npx --no-install electron .",
+    "dev": "npx --no-install electron .",
+    "web": "node server.js",
+    "pack": "npx --no-install electron-builder --dir",
+    "dist": "npx --no-install electron-builder"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.snappi.app",
+    "productName": "Snappi",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      "lib/**/*",
+      "snappi-preview-mcp/lib/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "zip"
+      ],
+      "category": "Development"
+    }
+  }
+}

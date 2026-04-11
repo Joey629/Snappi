@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.*
+container-bundle/
+docker-bundle/
+dist/
+.DS_Store
