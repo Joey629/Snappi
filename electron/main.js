@@ -7,6 +7,7 @@ import {
   session,
   shell,
 } from "electron";
+import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
@@ -15,11 +16,25 @@ import {
   stopPreview,
 } from "../snappi-preview-mcp/lib/pipeline.mjs";
 import { PREVIEW_INSPECTOR_BOOTSTRAP } from "./preview-inspector-bootstrap.mjs";
+import {
+  runInspectorAiChat,
+  sanitizeDomPatches,
+  isInspectorAiConfigured,
+} from "./inspector-ai.mjs";
+import {
+  sanitizeSourceEdits,
+  applySourceEditsToProject,
+} from "./sourceEditApply.mjs";
+import { readProjectFileSnippetsForAi } from "./ai-file-context.mjs";
+import { runDesignTokenAlerts } from "./designTokenAudit.mjs";
+import { gitLogForPath } from "./gitFileHistory.mjs";
+import { createAiFixupPullRequest } from "./github-ai-fixup-pr.mjs";
 import { PREVIEW_CHANGE_HIGHLIGHTS_BOOTSTRAP } from "./preview-change-highlights.mjs";
 import { runUiReviewHeuristics } from "./uiReviewHeuristics.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", "public");
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 /** Must match shell UI: `public/styles.css` --preview-shell-width */
 const PREVIEW_SHELL_WIDTH = 400;
@@ -34,6 +49,36 @@ const PREVIEW_TAB_BAR_HEIGHT = 40;
 const PREVIEW_PR_META_STRIP_HEIGHT = 104;
 const PREVIEW_TOP_CHROME =
   PREVIEW_TAB_BAR_HEIGHT + PREVIEW_PR_META_STRIP_HEIGHT;
+
+/** AI panel BrowserView: strip under preview, fixed right column, or floating corner. */
+const AI_DOCK_HEIGHT = 240;
+const AI_FLOAT_WIDTH = 400;
+const AI_FLOAT_HEIGHT = 300;
+/** Fixed strip on the right; preview uses remaining width (min width enforced in layout). */
+const AI_RIGHT_PANEL_WIDTH = 380;
+
+/** @type {import("electron").BrowserView | null} */
+let globalAiDockView = null;
+/** Enriched inspector pick; replay to AI dock when its page finishes loading (avoids dropped IPC). */
+let lastInspectorPickForAiDock = null;
+
+function broadcastInspectorPick(enriched) {
+  lastInspectorPickForAiDock = enriched;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("snappi-inspector-pick", enriched);
+  }
+  if (globalAiDockView && !globalAiDockView.webContents.isDestroyed()) {
+    try {
+      globalAiDockView.webContents.send("snappi-inspector-pick", enriched);
+    } catch (e) {
+      console.warn("[snappi] send pick to AI dock:", e?.message || e);
+    }
+  }
+}
+/** @type {"docked" | "floating" | "right"} */
+let aiDockMode = "right";
+/** When false, AI BrowserView gets zero bounds (user opens from shell UI). */
+let aiDockVisible = false;
 
 let mainWindow = null;
 
@@ -222,27 +267,148 @@ function serializeTabsPayload() {
 
 function broadcastTabsUpdated() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("preview:tabsUpdated", serializeTabsPayload());
+  const payload = serializeTabsPayload();
+  mainWindow.webContents.send("preview:tabsUpdated", payload);
+  if (globalAiDockView && !globalAiDockView.webContents.isDestroyed()) {
+    globalAiDockView.webContents.send("preview:tabsUpdated", payload);
+  }
 }
 
-function layoutPreviewBrowserView() {
+function detachAllBrowserViews() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const v of mainWindow.getBrowserViews()) {
+    mainWindow.removeBrowserView(v);
+  }
+}
+
+function ensureAiDockView() {
+  if (globalAiDockView && !globalAiDockView.webContents.isDestroyed()) return;
+  const v = new BrowserView({
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  globalAiDockView = v;
+  const wc = v.webContents;
+  wc.once("did-finish-load", () => {
+    if (lastInspectorPickForAiDock && !wc.isDestroyed()) {
+      try {
+        wc.send("snappi-inspector-pick", lastInspectorPickForAiDock);
+      } catch (e) {
+        console.warn("[snappi] replay inspector pick to AI dock:", e?.message || e);
+      }
+    }
+  });
+  void wc.loadFile(path.join(publicDir, "ai-dock.html"));
+}
+
+function attachActiveBrowserViews() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  detachAllBrowserViews();
   const tab = getActiveTab();
-  if (!mainWindow || mainWindow.isDestroyed() || !tab) return;
+  if (tab?.browserView && !tab.browserView.webContents.isDestroyed()) {
+    mainWindow.addBrowserView(tab.browserView);
+  }
+  if (
+    tab &&
+    globalAiDockView &&
+    !globalAiDockView.webContents.isDestroyed()
+  ) {
+    mainWindow.addBrowserView(globalAiDockView);
+  }
+  layoutBrowserViews();
+}
+
+function layoutBrowserViews() {
+  const tab = getActiveTab();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!tab?.browserView || tab.browserView.webContents.isDestroyed()) {
+    if (globalAiDockView && !globalAiDockView.webContents.isDestroyed()) {
+      globalAiDockView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    }
+    return;
+  }
+
   const [w, h] = mainWindow.getContentSize();
-  const x = shellPanelContentWidth;
-  const available = Math.max(320, w - x);
+  const x0 = shellPanelContentWidth;
+  const available = Math.max(320, w - x0);
   const desired =
     typeof tab.previewSimulatedWidth === "number" &&
     tab.previewSimulatedWidth >= 320
       ? tab.previewSimulatedWidth
       : null;
   const bvWidth = desired != null ? Math.min(desired, available) : available;
+
+  const H = Math.max(0, h - PREVIEW_TOP_CHROME);
+  let previewHeight = Math.max(200, H);
+
+  const hasAiView =
+    globalAiDockView && !globalAiDockView.webContents.isDestroyed();
+  const aiActive = Boolean(hasAiView && aiDockVisible);
+
+  /** Right strip width when `aiDockMode === "right"` (preview uses the remainder). */
+  let aiRightStripW = 0;
+  let previewSlotW = available;
+
+  if (aiActive && aiDockMode === "right") {
+    const minPreview = 300;
+    aiRightStripW = Math.min(
+      AI_RIGHT_PANEL_WIDTH,
+      Math.max(260, available - minPreview)
+    );
+    previewSlotW = available - aiRightStripW;
+  }
+
+  if (aiActive && aiDockMode === "docked") {
+    previewHeight = Math.max(200, H - AI_DOCK_HEIGHT);
+  }
+
+  let previewW = bvWidth;
+  if (aiActive && aiDockMode === "right") {
+    previewW =
+      desired != null ? Math.min(desired, previewSlotW) : previewSlotW;
+    previewHeight = Math.max(200, H);
+  }
+
   tab.browserView.setBounds({
-    x,
+    x: x0,
     y: PREVIEW_TOP_CHROME,
-    width: bvWidth,
-    height: Math.max(200, h - PREVIEW_TOP_CHROME),
+    width: previewW,
+    height: previewHeight,
   });
+
+  if (!hasAiView) return;
+
+  if (!aiActive) {
+    globalAiDockView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    return;
+  }
+
+  if (aiDockMode === "docked") {
+    globalAiDockView.setBounds({
+      x: x0,
+      y: PREVIEW_TOP_CHROME + previewHeight,
+      width: bvWidth,
+      height: AI_DOCK_HEIGHT,
+    });
+  } else if (aiDockMode === "right") {
+    globalAiDockView.setBounds({
+      x: x0 + previewSlotW,
+      y: PREVIEW_TOP_CHROME,
+      width: aiRightStripW,
+      height: H,
+    });
+  } else {
+    globalAiDockView.setBounds({
+      x: x0 + bvWidth - AI_FLOAT_WIDTH - 10,
+      y: h - AI_FLOAT_HEIGHT - 10,
+      width: AI_FLOAT_WIDTH,
+      height: AI_FLOAT_HEIGHT,
+    });
+  }
 }
 
 function destroyAllPreviewTabs() {
@@ -260,7 +426,7 @@ function destroyAllPreviewTabs() {
   activeTabId = null;
   previewInspectorEnabled = false;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBrowserView(null);
+    attachActiveBrowserViews();
   }
 }
 
@@ -333,8 +499,8 @@ async function setActiveTab(tabId) {
   if (!tab || tab.browserView.webContents.isDestroyed()) return;
   activeTabId = tabId;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBrowserView(tab.browserView);
-    layoutPreviewBrowserView();
+    ensureAiDockView();
+    attachActiveBrowserViews();
     await injectPreviewInspector(tab.browserView.webContents);
   }
   broadcastTabsUpdated();
@@ -346,10 +512,6 @@ function destroyTab(tabId) {
 
   const wasActive = activeTabId === tabId;
   stopPreview(tab.projectPath);
-
-  if (wasActive && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBrowserView(null);
-  }
 
   previewTabs.delete(tabId);
 
@@ -372,6 +534,10 @@ function destroyTab(tabId) {
     }
   } else {
     broadcastTabsUpdated();
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    attachActiveBrowserViews();
   }
 
   return { ok: true };
@@ -482,8 +648,8 @@ async function addOrFocusPreviewTab({
     existing.previewSimulatedWidth = null;
     existing.label = tabLabel(projectPath, prUrl);
     activeTabId = existing.id;
-    mainWindow.setBrowserView(existing.browserView);
-    layoutPreviewBrowserView();
+    ensureAiDockView();
+    attachActiveBrowserViews();
     await existing.browserView.webContents.loadURL(loadUrl);
     await injectPreviewInspector(existing.browserView.webContents);
   } else {
@@ -510,8 +676,8 @@ async function addOrFocusPreviewTab({
     };
     previewTabs.set(id, tab);
     activeTabId = id;
-    mainWindow.setBrowserView(browserView);
-    layoutPreviewBrowserView();
+    ensureAiDockView();
+    attachActiveBrowserViews();
     await browserView.webContents.loadURL(loadUrl);
     await injectPreviewInspector(browserView.webContents);
   }
@@ -571,7 +737,7 @@ function createWindow() {
 
   win.once("ready-to-show", () => win.show());
 
-  win.on("resize", () => layoutPreviewBrowserView());
+  win.on("resize", () => layoutBrowserViews());
   win.on("closed", () => {
     destroyAllPreviewTabs();
     mainWindow = null;
@@ -615,7 +781,78 @@ app.on("before-quit", () => {
 
 ipcMain.handle("app:getConfig", async () => ({
   defaultIssueUrl: process.env.ISSUE_URL || null,
+  hasAiProvider: isInspectorAiConfigured(),
+  hasGithubToken: Boolean(process.env.GITHUB_TOKEN?.trim()),
 }));
+
+ipcMain.handle("github:createAiFixupPr", async () => {
+  const tab = getActiveTab();
+  if (!tab?.projectPath || !tab?.prUrl?.trim()) {
+    return {
+      ok: false,
+      error: "No active preview tab with a PR URL.",
+    };
+  }
+  try {
+    return await createAiFixupPullRequest({
+      projectPath: tab.projectPath,
+      prUrl: tab.prUrl,
+    });
+  } catch (e) {
+    return { ok: false, error: previewFailureMessage(e) };
+  }
+});
+
+ipcMain.handle("github:postPrComment", async (_event, { prHtmlUrl, body } = {}) => {
+  const token = process.env.GITHUB_TOKEN?.trim();
+  if (!token) {
+    return {
+      ok: false,
+      error:
+        "Set GITHUB_TOKEN in the environment (PAT with repo scope) to post PR comments.",
+    };
+  }
+  const urlStr = typeof prHtmlUrl === "string" ? prHtmlUrl.trim() : "";
+  const text = typeof body === "string" ? body : "";
+  if (!urlStr || !text.trim()) {
+    return { ok: false, error: "Missing PR URL or comment body." };
+  }
+  let owner;
+  let repo;
+  let pull;
+  try {
+    ({ owner, repo, pull } = parsePrUrl(urlStr));
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+  const api = `https://api.github.com/repos/${owner}/${repo}/issues/${pull}/comments`;
+  try {
+    const res = await fetch(api, {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body: text.slice(0, 65000) }),
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      let msg = raw.slice(0, 500);
+      try {
+        const j = JSON.parse(raw);
+        msg = j.message || msg;
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, error: msg || `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
 
 ipcMain.handle("shell:openExternal", async (_event, url) => {
   if (typeof url === "string" && /^https?:\/\//i.test(url)) {
@@ -627,7 +864,7 @@ ipcMain.handle("shell:setShellPanelCollapsed", async (_event, { collapsed } = {}
   shellPanelContentWidth = collapsed
     ? PREVIEW_SHELL_COLLAPSED_WIDTH
     : PREVIEW_SHELL_WIDTH;
-  layoutPreviewBrowserView();
+  layoutBrowserViews();
   return {
     width: shellPanelContentWidth,
     collapsed: Boolean(collapsed),
@@ -695,7 +932,7 @@ ipcMain.handle("preview:setSimulatedViewportWidth", async (_event, { width } = {
     }
     tab.previewSimulatedWidth = Math.round(n);
   }
-  layoutPreviewBrowserView();
+  layoutBrowserViews();
   broadcastTabsUpdated();
   return { ok: true, width: tab.previewSimulatedWidth };
 });
@@ -707,11 +944,6 @@ ipcMain.handle("preview:analyzePickForReview", async (_event, { pick } = {}) => 
   const slim = { ...pick };
   delete slim.previewDataUrl;
   return { items: runUiReviewHeuristics(slim) };
-});
-
-ipcMain.handle("preview:describePfPick", async (_event, { className } = {}) => {
-  const { describePfPick } = await import("./patternfly-mcp.mjs");
-  return describePfPick(typeof className === "string" ? className : "");
 });
 
 /**
@@ -796,17 +1028,38 @@ function pickPayloadWithoutThumbnail(payload) {
 
 async function sendPatternFlyInsights(pick) {
   const wc = mainWindow?.webContents;
+  const aiWc = globalAiDockView?.webContents;
   if (!wc || wc.isDestroyed()) return;
   wc.send("snappi-pf-insights", { loading: true });
+  if (aiWc && !aiWc.isDestroyed()) {
+    aiWc.send("snappi-pf-insights", { loading: true });
+  }
   try {
     const { runPatternFlyAudit } = await import("./patternfly-mcp.mjs");
     const result = await runPatternFlyAudit(pick);
     if (!wc.isDestroyed()) {
       wc.send("snappi-pf-insights", { loading: false, ...result });
     }
+    if (aiWc && !aiWc.isDestroyed()) {
+      aiWc.send("snappi-pf-insights", { loading: false, ...result });
+    }
   } catch (e) {
     if (!wc.isDestroyed()) {
       wc.send("snappi-pf-insights", {
+        loading: false,
+        error: e?.message || String(e),
+        insights: [],
+        identity: null,
+        notPfMessage: null,
+        anomalies: [],
+        passes: [],
+        docSnippet: "",
+        mcpUsed: false,
+        nextStepsTemplate: "",
+      });
+    }
+    if (aiWc && !aiWc.isDestroyed()) {
+      aiWc.send("snappi-pf-insights", {
         loading: false,
         error: e?.message || String(e),
         insights: [],
@@ -828,27 +1081,151 @@ ipcMain.on("snappi-inspector-pick", (event, payload) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   void (async () => {
     const base = payload && typeof payload === "object" ? { ...payload } : {};
-    let enriched = base;
+    let enriched = { ...base };
+    try {
+      enriched.designAlerts = runDesignTokenAlerts(enriched);
+    } catch (e) {
+      console.warn("[snappi] design alerts:", e?.message || e);
+      enriched.designAlerts = [];
+    }
+    /** Send selector/text to AI dock before thumbnail — avoids race with slow capture or late panel load. */
+    if (!mainWindow.isDestroyed()) {
+      broadcastInspectorPick(enriched);
+    }
     try {
       const thumb = await captureInspectorPickThumbnail(
         tab.browserView.webContents,
         base.rect
       );
-      if (thumb) enriched = { ...base, previewDataUrl: thumb };
+      if (thumb) enriched = { ...enriched, previewDataUrl: thumb };
     } catch (e) {
       console.warn("[snappi] inspector thumbnail:", e?.message || e);
     }
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("snappi-inspector-pick", enriched);
-      const hints = runUiReviewHeuristics(pickPayloadWithoutThumbnail(enriched));
-      mainWindow.webContents.send("snappi-ui-review-hints", {
-        items: hints,
-        viewport: enriched.viewport || null,
-      });
+      broadcastInspectorPick(enriched);
     }
     void sendPatternFlyInsights(pickPayloadWithoutThumbnail(enriched));
   })();
 });
+
+ipcMain.handle("preview:gitFileHistory", async (_event, { filename, limit } = {}) => {
+  const tab = getActiveTab();
+  if (!tab?.projectPath) {
+    return { ok: false, error: "No active preview tab" };
+  }
+  const f = typeof filename === "string" ? filename.trim() : "";
+  if (!f) return { ok: false, error: "Missing filename" };
+  return gitLogForPath(tab.projectPath, f, Math.min(40, Number(limit) || 12));
+});
+
+ipcMain.handle("preview:applyDomPatches", async (_event, { patches } = {}) => {
+  const tab = getActiveTab();
+  if (!tab || tab.browserView.webContents.isDestroyed()) {
+    return { ok: false, error: "No preview loaded" };
+  }
+  const safe = sanitizeDomPatches(patches);
+  const injected = JSON.stringify(safe);
+  const js = `(function(){ if (typeof window.__snappiApplyDomPatches !== "function") {
+    return { ok: false, error: "Preview script not ready — reload the preview tab", applied: [], errors: [] };
+  }
+  return window.__snappiApplyDomPatches(${injected});
+})()`;
+  try {
+    const result = await tab.browserView.webContents.executeJavaScript(js, true);
+    return { ok: true, result };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle("preview:undoDomPatches", async () => {
+  const tab = getActiveTab();
+  if (!tab || tab.browserView.webContents.isDestroyed()) {
+    return { ok: false, error: "No preview loaded" };
+  }
+  const js = `(function(){ if (typeof window.__snappiUndoLastDomPatchBatch !== "function") {
+    return { ok: false, error: "Preview script not ready — reload the preview tab", undone: 0 };
+  }
+  return window.__snappiUndoLastDomPatchBatch();
+})()`;
+  try {
+    const result = await tab.browserView.webContents.executeJavaScript(js, true);
+    return { ok: true, result };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle("ai:inspectorChat", async (_event, payload = {}) => {
+  try {
+    const tab = getActiveTab();
+    let fileContexts = [];
+    if (
+      tab?.projectPath &&
+      typeof payload.changedFilesPreview === "string" &&
+      payload.changedFilesPreview.trim()
+    ) {
+      fileContexts = readProjectFileSnippetsForAi(
+        tab.projectPath,
+        payload.changedFilesPreview
+      );
+    }
+    const { reply, patches, sourceEdits } = await runInspectorAiChat({
+      messages: payload.messages,
+      pick: payload.pick || null,
+      pageUrl: typeof payload.pageUrl === "string" ? payload.pageUrl : "",
+      model: process.env.SNAPPI_AI_MODEL,
+      changedFilesPreview:
+        typeof payload.changedFilesPreview === "string"
+          ? payload.changedFilesPreview
+          : "",
+      fileContexts,
+    });
+    const safePatches = sanitizeDomPatches(patches);
+    const safeSource = sanitizeSourceEdits(sourceEdits);
+    return {
+      ok: true,
+      reply,
+      patches: safePatches,
+      sourceEdits: safeSource,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+
+ipcMain.handle("preview:applySourceEdits", async (_event, { edits } = {}) => {
+  const tab = getActiveTab();
+  if (!tab?.projectPath) {
+    return { ok: false, error: "No active preview tab with a project path." };
+  }
+  try {
+    const result = applySourceEditsToProject(tab.projectPath, edits);
+    return { ok: true, result };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+
+ipcMain.handle("shell:setAiDockMode", async (_event, _payload = {}) => {
+  aiDockMode = "right";
+  layoutBrowserViews();
+  return { ok: true, mode: aiDockMode };
+});
+
+ipcMain.handle("shell:getAiDockMode", async () => ({ mode: aiDockMode }));
+
+ipcMain.handle("shell:setAiDockVisible", async (_event, { visible } = {}) => {
+  if (typeof visible === "boolean") {
+    aiDockVisible = visible;
+    layoutBrowserViews();
+  }
+  return { ok: true, visible: aiDockVisible };
+});
+
+ipcMain.handle("shell:getAiDockVisible", async () => ({
+  visible: aiDockVisible,
+}));
 
 function prPreviewPaths() {
   const base = path.join(app.getPath("userData"), "pr-preview");

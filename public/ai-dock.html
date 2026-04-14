@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Snappi AI</title>
+    <link rel="stylesheet" href="./vendor/inter/inter.css" />
+    <link rel="stylesheet" href="./vendor/patternfly/patternfly.min.css" />
+    <link rel="stylesheet" href="./ai-dock.css" />
+  </head>
+  <body>
+    <div class="ai-dock ai-dock--right" id="aiDockRoot">
+      <div class="ai-dock__head">
+        <h1 class="ai-dock__title">AI assistant</h1>
+      </div>
+      <p class="ai-dock__hint" id="aiDockKeyHint" hidden>
+        Configure <code>OPENAI_API_KEY</code> or a local
+        <code>SNAPPI_OPENAI_BASE_URL</code> (e.g. Ollama). See Snappi Settings.
+      </p>
+      <div
+        class="ai-dock__messages"
+        id="aiDockMessages"
+        role="log"
+        aria-live="polite"
+      ></div>
+      <textarea
+        id="aiDockInput"
+        class="ai-dock__input"
+        rows="2"
+        placeholder="Pick a preview element, then ask (e.g. tooltip with email, styles, or JSX — PR file snippets are sent to the model)."
+        spellcheck="true"
+        aria-label="Message to AI assistant"
+      ></textarea>
+      <div class="ai-dock__toolbar">
+        <button type="button" class="ai-dock__btn ai-dock__btn--ghost" id="aiDockFixPr" title="Commit repo changes and open a new GitHub PR (needs GITHUB_TOKEN; preview-only DOM edits are not included)">
+          Open fix PR
+        </button>
+        <button type="button" class="ai-dock__btn ai-dock__btn--ghost" id="aiDockUndoPreview" title="Undo the last AI preview-only DOM change (text/styles)">
+          Undo preview
+        </button>
+        <button type="button" class="ai-dock__btn ai-dock__btn--ghost" id="aiDockClear">
+          Clear chat
+        </button>
+        <button type="button" class="ai-dock__btn ai-dock__btn--primary" id="aiDockSend">
+          Send
+        </button>
+      </div>
+      <p class="ai-dock__meta" id="aiDockMeta" hidden></p>
+    </div>
+    <script type="module" src="./ai-dock.js"></script>
+  </body>
+</html>

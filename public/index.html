@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Snappi</title>
+    <!-- PatternFly 6 (vendored) + Inter; Snappi tokens map to --pf-t--global--* -->
+    <link rel="stylesheet" href="./vendor/inter/inter.css" />
+    <link rel="stylesheet" href="./vendor/patternfly/patternfly.min.css" />
     <link rel="stylesheet" href="./styles.css" />
     <script>
       if (location.protocol === "file:") {
@@ -51,14 +54,25 @@
           >
             Open PR on GitHub
           </button>
-          <button
-            type="button"
-            class="btn btn-outline-primary preview-pr-meta-bar__inspect"
-            id="btnInspectorToggle"
-            aria-pressed="false"
-          >
-            Inspector mode
-          </button>
+          <div class="preview-pr-meta-bar__tools">
+            <button
+              type="button"
+              class="btn btn-outline-neutral preview-pr-meta-bar__ai"
+              id="btnAiAssistantToggle"
+              aria-pressed="false"
+              title="Show or hide the AI assistant panel (default: right)"
+            >
+              AI assistant
+            </button>
+            <button
+              type="button"
+              class="btn btn-outline-primary preview-pr-meta-bar__inspect"
+              id="btnInspectorToggle"
+              aria-pressed="false"
+            >
+              Inspector mode
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -209,164 +223,169 @@
               hidden
               aria-live="polite"
             >
-              <div class="inspector-pick-visual">
-                <img
-                  id="inspectorPickThumb"
-                  class="inspector-pick-thumb"
-                  alt="Picked element"
-                  hidden
-                />
-                <div
-                  id="inspectorPickPlaceholder"
-                  class="inspector-pick-placeholder"
-                  role="status"
-                >
-                  No screenshot (element too small or capture failed)
+              <section class="inspector-anchor" aria-labelledby="inspectorAnchorHeading">
+                <h3 class="inspector-anchor__title" id="inspectorAnchorHeading">
+                  Visual anchor
+                </h3>
+                <p class="inspector-anchor__hint">
+                  JPEG preview of the picked node — confirms which atom you are auditing.
+                </p>
+                <div class="inspector-pick-visual">
+                  <img
+                    id="inspectorPickThumb"
+                    class="inspector-pick-thumb"
+                    alt="Picked component preview"
+                    hidden
+                  />
+                  <div
+                    id="inspectorPickPlaceholder"
+                    class="inspector-pick-placeholder"
+                    role="status"
+                  >
+                    No screenshot (element too small or capture failed)
+                  </div>
                 </div>
-              </div>
-              <details class="inspector-pick-details">
-                <summary>Pick details (JSON)</summary>
-                <pre class="inspector-pick-json" id="inspectorPickJson"></pre>
-              </details>
-            </div>
+              </section>
 
-            <section class="pf-insights" id="pfInsightsPanel" hidden>
-              <h3 class="pf-insights__title">PatternFly review</h3>
-              <p class="field-hint field-hint--tight pf-insights__lede">
-                <strong>Who</strong> this node maps to, <strong>what failed</strong> checks
-                (MCP + heuristics), <strong>what already passes</strong> from the DOM
-                snapshot — then a comment draft. No file:line until we add source maps.
-              </p>
-              <p class="pf-insights__status" id="pfInsightsStatus" hidden></p>
-
-              <div class="pf-block pf-block--identity" id="pfIdentityBlock" hidden>
-                <h4 class="pf-block__title">Component</h4>
-                <div id="pfIdentityBody" class="pf-block__body"></div>
+              <div
+                id="inspectorVerdictStrip"
+                class="inspector-verdict inspector-verdict--loading"
+                role="status"
+                aria-live="polite"
+                hidden
+              >
+                <span class="inspector-verdict__badge" aria-hidden="true"></span>
+                <span class="inspector-verdict__label">System Verdict</span>
+                <span class="inspector-verdict__state" id="inspectorVerdictState"
+                  >Scanning…</span
+                >
               </div>
 
-              <div class="pf-block pf-block--issues" id="pfIssuesBlock" hidden>
-                <h4 class="pf-block__title">Issues</h4>
-                <p class="pf-block__empty" id="pfIssuesEmpty" hidden>
-                  No issues flagged for this pick.
-                </p>
-                <div class="pf-insights__list" id="pfInsightsList"></div>
-              </div>
-
-              <div class="pf-block pf-block--passes" id="pfPassesBlock" hidden>
-                <h4 class="pf-block__title">Looks OK (auto)</h4>
-                <ul class="pf-passes-list" id="pfPassesList"></ul>
-              </div>
-
-              <div class="pf-block pf-block--handoff" id="pfHandoffBlock">
-                <h4 class="pf-block__title">Comment draft</h4>
-                <p class="field-hint field-hint--tight pf-handoff-hint">
-                  Edit if you want, then copy. Posting to GitHub needs a token (not wired
-                  yet).
-                </p>
-                <textarea
-                  id="handoffDraftTa"
-                  class="inspector-session__textarea"
-                  rows="6"
-                  spellcheck="true"
-                  placeholder="Fills from issues + pick when MCP finishes…"
-                ></textarea>
-                <div class="pf-handoff-actions">
-                  <button type="button" class="btn btn-ghost btn-block" id="btnHandoffRefresh">
-                    Regenerate from issues
-                  </button>
-                  <button type="button" class="btn btn-primary btn-block" id="btnHandoffCopy">
-                    Copy comment text
-                  </button>
+              <details
+                class="inspector-disclosure"
+                id="inspectorSemanticDisclosure"
+                open
+                aria-labelledby="inspectorSemanticHeading"
+              >
+                <summary class="inspector-disclosure__summary">
+                  <span class="inspector-disclosure__title-wrap">
+                    <span class="inspector-disclosure__chevron" aria-hidden="true">▸</span>
+                    <span class="inspector-disclosure__title" id="inspectorSemanticHeading"
+                      >Semantic check</span
+                    >
+                  </span>
                   <button
                     type="button"
-                    class="btn btn-ghost btn-block"
-                    id="btnPostGithubPr"
-                    disabled
-                    title="Requires GitHub API token (coming soon)"
+                    class="inspector-disclosure__action-link"
+                    id="btnInspectorToggleAllProps"
+                    aria-pressed="false"
                   >
-                    Post to PR (soon)
+                    Show all properties
                   </button>
-                </div>
-              </div>
-
-              <details class="pf-insights__next-steps" id="pfInsightsNextSteps" hidden>
-                <summary>Full template + doc excerpt (for AI / archive)</summary>
-                <p class="field-hint field-hint--tight pf-insights__next-steps-hint">
-                  Longer block including MCP text — use if you need the raw doc excerpt.
-                </p>
-                <pre class="pf-insights__next-steps-pre" id="pfInsightsNextStepsPre"></pre>
-              </details>
-            </section>
-
-            <section class="ui-review-card" id="uiReviewCard" aria-labelledby="uiReviewCardTitle">
-              <h3 class="ui-review-card__title" id="uiReviewCardTitle">
-                UI review checklist
-              </h3>
-              <p class="field-hint field-hint--tight ui-review-card__lede">
-                <strong>Optional.</strong> After you pick an element: width buttons
-                shrink the preview (like a phone/tablet). Checkboxes are your own
-                sign-off—nothing is sent until you use “Copy GitHub Markdown” below.
-              </p>
-              <div class="ui-review-viewport" id="uiReviewViewportRow">
-                <span class="ui-review-viewport__label" id="uiReviewViewportLabel"
-                  >Preview width</span
-                >
-                <div class="ui-review-viewport__btns" role="group" aria-labelledby="uiReviewViewportLabel">
-                  <button type="button" class="btn btn-ghost btn--compact" data-snappi-vp="390">
-                    ~390
-                  </button>
-                  <button type="button" class="btn btn-ghost btn--compact" data-snappi-vp="768">
-                    ~768
-                  </button>
-                  <button type="button" class="btn btn-ghost btn--compact" data-snappi-vp="fill">
-                    Fill
-                  </button>
-                </div>
-              </div>
-              <details class="ui-review-manual-wrap">
-                <summary class="ui-review-manual-wrap__summary">
-                  Optional manual checklist (advanced)
                 </summary>
-                <fieldset class="ui-review-manual">
-                  <legend class="ui-review-manual__legend">Manual</legend>
-                  <ul class="ui-review-manual__list" id="uiReviewManualList"></ul>
-                </fieldset>
+                <div class="inspector-disclosure__content">
+                  <p class="inspector-semantic__hint" id="inspectorSemanticHint">
+                    By default, up to the three highest-severity issues are shown (text and fill
+                    colors may be combined). Use “Show all properties” for the full list.
+                  </p>
+                  <div
+                    id="inspectorSemanticCards"
+                    class="inspector-semantic-cards"
+                    role="list"
+                  ></div>
+                </div>
               </details>
-            </section>
 
-            <div class="inspector-session" id="inspectorSessionPanel">
-              <h3 class="inspector-session__title">Session</h3>
-              <div class="inspector-session__add" id="inspectorSessionAddWrap" hidden>
-                <label class="field-label" for="sessionPickFeedback">Feedback for current pick</label>
+              <details
+                class="inspector-disclosure inspector-disclosure--audit"
+                id="inspectorAuditDisclosure"
+                open
+                aria-labelledby="inspectorAuditHeading"
+              >
+                <summary class="inspector-disclosure__summary">
+                  <span class="inspector-disclosure__title-wrap">
+                    <span class="inspector-disclosure__chevron" aria-hidden="true">▸</span>
+                    <span class="inspector-disclosure__title" id="inspectorAuditHeading"
+                      >Audit context</span
+                    >
+                  </span>
+                </summary>
+                <div class="inspector-disclosure__content">
+                  <p class="field-hint field-hint--tight inspector-audit-context__hint">
+                    Preview clicks don’t map to a source file—pick a changed path and load context
+                    for author, time, and commit message from <code>git log</code>.
+                  </p>
+                  <div class="inspector-git-row">
+                    <select
+                      id="inspectorGitFile"
+                      class="inspector-git-select"
+                      aria-label="File path from PR"
+                    >
+                      <option value="">Select a file…</option>
+                    </select>
+                    <button type="button" class="btn btn-ghost btn--compact" id="btnInspectorGitLoad">
+                      Load context
+                    </button>
+                  </div>
+                  <div id="inspectorAuditContext" class="inspector-audit-context__body"></div>
+                </div>
+              </details>
+
+              <div class="inspector-pick-workflow" id="inspectorPickWorkflow" hidden>
+                <h3 class="inspector-workflow__title" id="inspectorWorkflowHeading">
+                  Feedback cart
+                </h3>
+                <div
+                  class="inspector-workflow__deviation"
+                  id="inspectorWorkflowDeviation"
+                  hidden
+                ></div>
+                <label class="field-label" for="sessionPickFeedback">Notes for this pick</label>
                 <textarea
                   id="sessionPickFeedback"
-                  class="inspector-session__textarea"
+                  class="inspector-session__textarea inspector-workflow__textarea"
                   rows="3"
-                  placeholder="What should change? (layout, copy, contrast, ...)"
+                  placeholder="What should change? (layout, copy, contrast, …)"
                   spellcheck="true"
                 ></textarea>
                 <button type="button" class="btn btn-primary btn-block" id="btnSessionAdd">
                   Add to session
                 </button>
               </div>
-              <ul id="inspectorSessionList" class="inspector-session-list" aria-label="Session items"></ul>
-              <div class="inspector-session__actions">
-                <button type="button" class="btn btn-ghost btn-block" id="btnSessionClear">
-                  Clear session
-                </button>
-              </div>
+            </div>
+
+            <div class="inspector-session" id="inspectorSessionPanel">
               <div class="inspector-export" id="inspectorExportWrap">
                 <h4 class="inspector-export__title">Share feedback</h4>
-                <p class="field-hint field-hint--tight inspector-export__hint">
-                  Copies a Markdown block you can paste into a GitHub PR comment or a
-                  ticket. Screenshots stay local (not uploaded).
-                </p>
-                <div class="inspector-export__btns">
-                  <button type="button" class="btn btn-primary btn-block" id="btnCopyGithubMarkdown">
-                    Copy GitHub Markdown
-                  </button>
-                  <button type="button" class="btn btn-ghost btn-block" id="btnOpenPrOnGithub">
-                    Open on GitHub
+                <button
+                  type="button"
+                  class="btn btn-primary btn-block"
+                  id="btnPostFeedbackToPr"
+                >
+                  Post feedback to PR
+                </button>
+              </div>
+              <div class="inspector-session-core">
+                <div class="inspector-session__header">
+                  <h3 class="inspector-session__title">Session</h3>
+                  <span
+                    class="inspector-session__count"
+                    id="inspectorSessionCount"
+                    aria-live="polite"
+                    >0</span
+                  >
+                </div>
+                <div class="inspector-session__add" id="inspectorSessionAddWrap" hidden></div>
+                <div class="inspector-session__scroll">
+                  <ul
+                    id="inspectorSessionList"
+                    class="inspector-session-list"
+                    aria-label="Session feedback items"
+                  ></ul>
+                </div>
+                <div class="inspector-session__actions">
+                  <button type="button" class="btn btn-ghost btn-block" id="btnSessionClear">
+                    Clear session
                   </button>
                 </div>
               </div>
@@ -442,6 +461,27 @@
             ← Back
           </button>
           <h1 class="settings-page__title">Settings</h1>
+
+          <section class="settings-section card">
+            <h2 class="settings-section__title">AI assistant (inspector)</h2>
+            <p class="settings-section__body">
+              Snappi does <strong>not</strong> store secrets in Settings. Configure via environment
+              variables before launch:
+            </p>
+            <ul class="settings-section__list">
+              <li>
+                <strong>OpenAI cloud:</strong> <code>OPENAI_API_KEY</code> (or
+                <code>SNAPPI_OPENAI_API_KEY</code>). Optional <code>SNAPPI_AI_MODEL</code> (default
+                <code>gpt-4o-mini</code>).
+              </li>
+              <li>
+                <strong>Local (Ollama):</strong> e.g.
+                <code>SNAPPI_OPENAI_BASE_URL=http://127.0.0.1:11434/v1</code> and
+                <code>SNAPPI_AI_MODEL=llama3.2</code> — no API key required. Or set
+                <code>SNAPPI_AI_LOCAL=1</code> with a localhost base URL.
+              </li>
+            </ul>
+          </section>
 
           <section class="settings-section card">
             <h2 class="settings-section__title">GitHub API token</h2>

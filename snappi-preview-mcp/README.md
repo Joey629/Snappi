@@ -57,13 +57,13 @@ Restart Cursor after saving.
 - **Private repos** need working `git` credentials on the machine.
 - **Env / API** for apps like `dev-portal-OCP`: use `prepare_env` with real keys or a follow-up **mock/MSW** tool (your roadmap).
 
-## Snappi 桌面应用（已内嵌）
+## Snappi desktop app (embedded)
 
-Snappi **不再依赖 Cursor** 即可跑同一流水线：在桌面版输入 GitHub **PR** 链接后，点 **「Run PR dev server」**。Electron 主进程直接 `import` 本目录下的 `lib/pipeline.mjs`（与 MCP 共用逻辑），克隆到 `userData/pr-preview/repos`，日志在 `userData/pr-preview/logs`。
+The Snappi desktop app runs the same pipeline **without requiring Cursor**: paste a GitHub **PR** URL and click **Run PR dev server**. The Electron main process imports `lib/pipeline.mjs` from this directory (shared with MCP), clones into `userData/pr-preview/repos`, and writes logs under `userData/pr-preview/logs`.
 
-Snappi 桌面版已去掉 Docker 线程 UI，只保留 **Run PR dev server**（本机真实项目 dev，如 5173）。
+The desktop UI no longer includes the Docker thread UI; it only offers **Run PR dev server** for a real local dev server (e.g. port 5173).
 
-## Snappi “内嵌 + 桥接” 后续
+## Embedded + bridge (future)
 
-- **Electron** 仍可额外启动 stdio MCP sidecar：`node snappi-preview-mcp/src/index.js`（给 Cursor 用）。
-- **容器 + 反向代理**：将来可在 sidecar 内起隔离环境，把 dev 端口代理到 **webview**。
+- **Electron** can still launch the stdio MCP sidecar: `node snappi-preview-mcp/src/index.js` (e.g. for Cursor).
+- **Containers + reverse proxy**: a future sidecar could run an isolated environment and proxy the dev port into the **webview**.

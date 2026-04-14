@@ -45,19 +45,16 @@ contextBridge.exposeInMainWorld("snappi", {
     ipcRenderer.on("snappi-pf-insights", listener);
     return () => ipcRenderer.removeListener("snappi-pf-insights", listener);
   },
-  onUiReviewHints: (callback) => {
-    if (typeof callback !== "function") return () => {};
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("snappi-ui-review-hints", listener);
-    return () =>
-      ipcRenderer.removeListener("snappi-ui-review-hints", listener);
-  },
-  setPreviewSimulatedViewport: (width) =>
-    ipcRenderer.invoke("preview:setSimulatedViewportWidth", { width }),
+  gitFileHistory: (opts) =>
+    ipcRenderer.invoke("preview:gitFileHistory", opts ?? {}),
   analyzePickForReview: (pick) =>
     ipcRenderer.invoke("preview:analyzePickForReview", { pick }),
-  describePfPick: (className) =>
-    ipcRenderer.invoke("preview:describePfPick", { className }),
+  inspectorAiChat: (payload) => ipcRenderer.invoke("ai:inspectorChat", payload),
+  applyDomPatches: (patches) =>
+    ipcRenderer.invoke("preview:applyDomPatches", { patches }),
+  undoLastDomPatches: () => ipcRenderer.invoke("preview:undoDomPatches"),
+  applySourceEdits: (edits) =>
+    ipcRenderer.invoke("preview:applySourceEdits", { edits }),
   listPreviewTabs: () => ipcRenderer.invoke("preview:listTabs"),
   switchPreviewTab: (tabId) =>
     ipcRenderer.invoke("preview:switchTab", { tabId }),
@@ -72,4 +69,11 @@ contextBridge.exposeInMainWorld("snappi", {
     return () =>
       ipcRenderer.removeListener("preview:tabsUpdated", listener);
   },
+  setAiDockMode: (mode) => ipcRenderer.invoke("shell:setAiDockMode", { mode }),
+  getAiDockMode: () => ipcRenderer.invoke("shell:getAiDockMode"),
+  setAiDockVisible: (visible) =>
+    ipcRenderer.invoke("shell:setAiDockVisible", { visible }),
+  getAiDockVisible: () => ipcRenderer.invoke("shell:getAiDockVisible"),
+  postPrComment: (opts) => ipcRenderer.invoke("github:postPrComment", opts ?? {}),
+  createAiFixupPr: () => ipcRenderer.invoke("github:createAiFixupPr"),
 });

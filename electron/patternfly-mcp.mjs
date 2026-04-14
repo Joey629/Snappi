@@ -70,14 +70,14 @@ const PF5_SPACERS = [
   { token: "--pf-v5-global--spacer--2xl", px: 48 },
 ];
 
-/** PF v6 uses the same scale; token names use --pf-v6-global--… */
+/** PF v6 design tokens: --pf-t--global--spacer--* (default 1rem = 16px root). */
 const PF6_SPACERS = [
-  { token: "--pf-v6-global--spacer--xs", px: 4 },
-  { token: "--pf-v6-global--spacer--sm", px: 8 },
-  { token: "--pf-v6-global--spacer--md", px: 16 },
-  { token: "--pf-v6-global--spacer--lg", px: 24 },
-  { token: "--pf-v6-global--spacer--xl", px: 32 },
-  { token: "--pf-v6-global--spacer--2xl", px: 48 },
+  { token: "--pf-t--global--spacer--xs", px: 4 },
+  { token: "--pf-t--global--spacer--sm", px: 8 },
+  { token: "--pf-t--global--spacer--md", px: 16 },
+  { token: "--pf-t--global--spacer--lg", px: 24 },
+  { token: "--pf-t--global--spacer--xl", px: 32 },
+  { token: "--pf-t--global--spacer--2xl", px: 48 },
 ];
 
 function spacerTableForClassName(className) {

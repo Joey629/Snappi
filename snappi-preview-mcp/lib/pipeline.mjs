@@ -592,7 +592,7 @@ async function readGitHead(dest) {
 function humanizeGitFetchError(msg) {
   const m = String(msg || "");
   if (
-    /couldn't find remote ref|could not find remote ref|unable to find|找不到远程引用|无法找到远程引用|pull\/\d+\/head/i.test(
+    /couldn't find remote ref|could not find remote ref|unable to find|pull\/\d+\/head/i.test(
       m
     )
   ) {

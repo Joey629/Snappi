@@ -10,7 +10,7 @@ services:
     ports:
       - "${SNAPPI_HOST_PORT:-3000}:3000"
     environment:
-      # 可选：提高 GitHub API 限额、访问私有仓库
+      # Optional: higher GitHub API limits and private repo access
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      # 可选：启动后直接加载该 Issue（也可在页面里粘贴）
+      # Optional: load this issue on startup (you can also paste in the UI)
       ISSUE_URL: ${ISSUE_URL:-}

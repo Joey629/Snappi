@@ -20,25 +20,22 @@ const prPreviewLog = document.getElementById("prPreviewLog");
 const prPreviewError = document.getElementById("prPreviewError");
 const inspectorSessionCard = document.getElementById("inspectorSessionCard");
 const btnInspectorToggle = document.getElementById("btnInspectorToggle");
+const btnAiAssistantToggle = document.getElementById("btnAiAssistantToggle");
 const inspectorPickPanel = document.getElementById("inspectorPickPanel");
 const inspectorPickThumb = document.getElementById("inspectorPickThumb");
 const inspectorPickPlaceholder = document.getElementById("inspectorPickPlaceholder");
-const inspectorPickJson = document.getElementById("inspectorPickJson");
-const pfInsightsPanel = document.getElementById("pfInsightsPanel");
-const pfInsightsStatus = document.getElementById("pfInsightsStatus");
-const pfInsightsList = document.getElementById("pfInsightsList");
-const pfInsightsNextSteps = document.getElementById("pfInsightsNextSteps");
-const pfInsightsNextStepsPre = document.getElementById("pfInsightsNextStepsPre");
-const pfIdentityBlock = document.getElementById("pfIdentityBlock");
-const pfIdentityBody = document.getElementById("pfIdentityBody");
-const pfIssuesBlock = document.getElementById("pfIssuesBlock");
-const pfIssuesEmpty = document.getElementById("pfIssuesEmpty");
-const pfPassesBlock = document.getElementById("pfPassesBlock");
-const pfPassesList = document.getElementById("pfPassesList");
-const handoffDraftTa = document.getElementById("handoffDraftTa");
-const btnHandoffRefresh = document.getElementById("btnHandoffRefresh");
-const btnHandoffCopy = document.getElementById("btnHandoffCopy");
-const btnPostGithubPr = document.getElementById("btnPostGithubPr");
+const inspectorGitFile = document.getElementById("inspectorGitFile");
+const btnInspectorGitLoad = document.getElementById("btnInspectorGitLoad");
+const inspectorAuditContext = document.getElementById("inspectorAuditContext");
+const inspectorSemanticHint = document.getElementById("inspectorSemanticHint");
+const btnInspectorToggleAllProps = document.getElementById(
+  "btnInspectorToggleAllProps"
+);
+const inspectorSemanticCards = document.getElementById("inspectorSemanticCards");
+const inspectorPickWorkflow = document.getElementById("inspectorPickWorkflow");
+const inspectorWorkflowDeviation = document.getElementById(
+  "inspectorWorkflowDeviation"
+);
 const prPatternFlyPrBlock = document.getElementById("prPatternFlyPrBlock");
 const prPatternFlySlugHint = document.getElementById("prPatternFlySlugHint");
 const prPatternFlyLoading = document.getElementById("prPatternFlyLoading");
@@ -54,6 +51,7 @@ const inspectorSessionAddWrap = document.getElementById("inspectorSessionAddWrap
 const sessionPickFeedback = document.getElementById("sessionPickFeedback");
 const btnSessionAdd = document.getElementById("btnSessionAdd");
 const inspectorSessionList = document.getElementById("inspectorSessionList");
+const inspectorSessionCount = document.getElementById("inspectorSessionCount");
 const btnSessionClear = document.getElementById("btnSessionClear");
 const prChangedFilesCard = document.getElementById("prChangedFilesCard");
 const prChangedUxSummary = document.getElementById("prChangedUxSummary");
@@ -67,58 +65,13 @@ const prChangedFilesList = document.getElementById("prChangedFilesList");
 
 const LAST_PREVIEW_URL_KEY = "snappiLastPreviewUrl";
 const SESSION_STORAGE_KEY = "snappiInspectorSessionV1";
+/** Persists whether the AI assistant BrowserView is shown ("1" / absent). */
+const AI_DOCK_VISIBLE_KEY = "snappiAiDockVisible";
 
-/** @type {{ title?: string; htmlUrl?: string; previewUrl?: string; previewSimulatedWidth?: number | null } | null} */
+/** @type {{ title?: string; htmlUrl?: string; previewUrl?: string; previewSimulatedWidth?: number | null; changedFiles?: { filename: string; status?: string }[]; changedFilesTotal?: number; changedFilesTruncated?: boolean; filesDiffUrl?: string } | null} */
 let lastPrExportMeta = null;
 
-/** @type {{ items: { id: string; category: string; level: string; title: string; detail: string }[]; viewport: object | null }} */
-let lastUiReviewHints = { items: [], viewport: null };
-
-/** @type {object | null} */
-let lastPfInsightsForExport = null;
-
-/** @type {object | null} */
-let lastPfAuditPayload = null;
-
-/** @type {object | null} */
-let lastSyncPfDescribe = null;
-
-const MANUAL_CHECKLIST_DEF = [
-  {
-    id: "a11y_keyboard",
-    label: "Keyboard / focus order makes sense on this screen",
-  },
-  {
-    id: "a11y_labels",
-    label: "Visible labels and states are clear (not only color or position)",
-  },
-  {
-    id: "states_all",
-    label: "Hover, focus, active, and disabled states look intentional",
-  },
-  {
-    id: "responsive_narrow",
-    label: "Checked narrow layout (use ~390 preview width)",
-  },
-  {
-    id: "responsive_wide",
-    label: "Checked wide / desktop layout",
-  },
-  {
-    id: "copy_voice",
-    label: "Copy matches product tone; no obvious typos",
-  },
-  {
-    id: "brand_visual",
-    label: "Icons, colors, and spacing match brand / design system",
-  },
-];
-
-const uiReviewCard = document.getElementById("uiReviewCard");
-const uiReviewManualList = document.getElementById("uiReviewManualList");
-const uiReviewViewportRow = document.getElementById("uiReviewViewportRow");
-const btnCopyGithubMarkdown = document.getElementById("btnCopyGithubMarkdown");
-const btnOpenPrOnGithub = document.getElementById("btnOpenPrOnGithub");
+const btnPostFeedbackToPr = document.getElementById("btnPostFeedbackToPr");
 const inspectorExportWrap = document.getElementById("inspectorExportWrap");
 
 const PR_URL_MAX = 5;
@@ -190,6 +143,10 @@ const PR_TOUR_HIGHLIGHT_DEBOUNCE_MS = 450;
 let inspectorModeOn = false;
 /** @type {object | null} */
 let pendingPick = null;
+/** Last PatternFly insight payload for system verdict (silent scan). */
+let lastPfInsightPayload = null;
+/** When false, semantic list shows up to SEMANTIC_ISSUE_CAP worst issues (merged color+fill). */
+let inspectorSemanticShowAll = false;
 
 function loadSessionItems() {
   try {
@@ -224,8 +181,535 @@ function sanitizePickForJsonDisplay(pick) {
   return out;
 }
 
+function mapAlertsBySemantic(alerts) {
+  /** @type {Record<string, object>} */
+  const m = Object.create(null);
+  if (!Array.isArray(alerts)) return m;
+  for (const a of alerts) {
+    const id = a?.semanticId;
+    if (id && m[id] == null) m[id] = a;
+  }
+  return m;
+}
+
+/** Prefer hex for literals; keep short if already token-like. */
+function humanizeColorForDisplay(s) {
+  const raw = String(s || "").trim();
+  if (!raw || raw === "—") return "—";
+  const m = raw.match(
+    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i
+  );
+  if (m) {
+    const r = Math.min(255, Math.max(0, Number(m[1])));
+    const g = Math.min(255, Math.max(0, Number(m[2])));
+    const b = Math.min(255, Math.max(0, Number(m[3])));
+    const toHex = (n) => n.toString(16).padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+  }
+  return raw.length > 48 ? `${raw.slice(0, 45)}…` : raw;
+}
+
+function relativeTimeFromYmd(ymd) {
+  const s = String(ymd || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s || "";
+  const t = new Date(`${s}T12:00:00`).getTime();
+  if (Number.isNaN(t)) return s;
+  const day = 86400000;
+  const diff = Math.round((Date.now() - t) / day);
+  if (diff <= 0) return "today";
+  if (diff === 1) return "yesterday";
+  if (diff < 14) return `${diff} days ago`;
+  if (diff < 45) return `${Math.round(diff / 7)} weeks ago`;
+  return s;
+}
+
+function extractIssueRef(subject) {
+  const m = String(subject || "").match(/(?:#|issue\s*)(\d+)/i);
+  return m ? m[1] : "";
+}
+
+/** Default issue list length (after merging color + fill). */
+const SEMANTIC_ISSUE_CAP = 3;
+
+function semanticIssueSeverity(card) {
+  if (!card?.warn || !card?.alert) return 0;
+  switch (card.id) {
+    case "implementation":
+      return 100;
+    case "spacing":
+      return 85;
+    case "colorFill":
+      return 82;
+    case "color":
+      return 72;
+    case "fill":
+      return 68;
+    case "radius":
+      return 60;
+    case "tokens":
+      return 45;
+    default:
+      return 40;
+  }
+}
+
+/**
+ * When both text and fill colors are flagged, show one combined row.
+ * @param {Array} cards from buildSemanticCardModelsRaw
+ */
+function mergeColorFillCards(cards) {
+  const color = cards.find((c) => c.id === "color");
+  const fill = cards.find((c) => c.id === "fill");
+  const rest = cards.filter((c) => c.id !== "color" && c.id !== "fill");
+  if (color?.warn && fill?.warn && color.alert && fill.alert) {
+    rest.push({
+      id: "colorFill",
+      label: "Color & fill",
+      valueDisplay: `${color.valueDisplay} / ${fill.valueDisplay}`,
+      currentSemantic: `Text: ${color.currentSemantic} · Fill: ${fill.currentSemantic}`,
+      standardSemantic: "Semantic tokens for text and surface",
+      warn: true,
+      alert: color.alert,
+      secondaryAlert: fill.alert,
+    });
+    return rest;
+  }
+  if (color) rest.push(color);
+  if (fill) rest.push(fill);
+  return rest;
+}
+
+function buildSemanticCardModelsRaw(pick) {
+  const computed =
+    pick?.computed && typeof pick.computed === "object" ? pick.computed : {};
+  const alerts = Array.isArray(pick?.designAlerts) ? pick.designAlerts : [];
+  const by = mapAlertsBySemantic(alerts);
+
+  const pad = String(computed.padding || "").trim();
+  const margin = String(computed.margin || "").trim();
+  const spacingDisplay =
+    pad && pad !== "0px" && pad !== "0px 0px 0px 0px"
+      ? pad
+      : margin || "—";
+
+  const colorDisp = String(computed.color || "—").trim() || "—";
+  const fillDisp = String(computed["background-color"] || "—").trim() || "—";
+  const radDisp = String(computed["border-radius"] || "—").trim() || "—";
+
+  const cards = [
+    {
+      id: "spacing",
+      label: "Spacing",
+      valueDisplay: spacingDisplay,
+      currentSemantic: spacingDisplay,
+      standardSemantic: by.spacing?.expectedValue || "—",
+      warn: Boolean(by.spacing),
+      alert: by.spacing || null,
+    },
+    {
+      id: "color",
+      label: "Color",
+      valueDisplay: colorDisp,
+      currentSemantic: humanizeColorForDisplay(computed.color),
+      standardSemantic: by.color?.expectedValue || "Semantic color token",
+      warn: Boolean(by.color),
+      alert: by.color || null,
+    },
+    {
+      id: "fill",
+      label: "Fill color",
+      valueDisplay: fillDisp,
+      currentSemantic: humanizeColorForDisplay(computed["background-color"]),
+      standardSemantic: by.fill?.expectedValue || "Semantic fill token",
+      warn: Boolean(by.fill),
+      alert: by.fill || null,
+    },
+    {
+      id: "radius",
+      label: "Corner radius",
+      valueDisplay: radDisp,
+      currentSemantic: radDisp,
+      standardSemantic: by.radius?.expectedValue || "—",
+      warn: Boolean(by.radius),
+      alert: by.radius || null,
+    },
+  ];
+
+  const inlineN = Number(pick?.inlineStyleDeclarationCount || 0);
+  if (by.implementation || inlineN > 0) {
+    cards.push({
+      id: "implementation",
+      label: "Implementation",
+      valueDisplay:
+        inlineN > 0
+          ? `${inlineN} inline declaration(s)`
+          : "Styles from stylesheet",
+      currentSemantic:
+        inlineN > 0
+          ? `${inlineN} inline declaration(s)`
+          : "Stylesheet rules",
+      standardSemantic:
+        by.implementation?.expectedValue || "Tokenized / class-based styles",
+      warn: Boolean(by.implementation),
+      alert: by.implementation || null,
+    });
+  }
+
+  if (by.tokens) {
+    const pf = Array.isArray(pick?.patternFlyClassTokens)
+      ? pick.patternFlyClassTokens
+      : [];
+    const n = pf.length;
+    cards.push({
+      id: "tokens",
+      label: "PatternFly & CSS vars",
+      valueDisplay: n
+        ? `${n} pf-* class token(s) on node`
+        : "PF-related; few --pf vars in computed",
+      currentSemantic: n
+        ? `${n} PatternFly class token(s)`
+        : "PatternFly classes present",
+      standardSemantic: by.tokens?.expectedValue || "PF CSS variables visible in cascade",
+      warn: true,
+      alert: by.tokens,
+    });
+  }
+
+  return cards;
+}
+
+function buildSemanticCardModels(pick) {
+  return mergeColorFillCards(buildSemanticCardModelsRaw(pick));
+}
+
+function buildInspectorAtomicHtml(c, atomicId) {
+  const a = c.alert;
+  const b = c.secondaryAlert;
+  if (!a) return "";
+  const line = (alert) =>
+    `<p class="inspector-atomic-alert__line"><span class="inspector-atomic-alert__k">Current</span> ${escapeHtml(
+      String(alert.currentValue ?? "")
+    )} <span class="inspector-atomic-alert__sep">|</span> <span class="inspector-atomic-alert__k">Expected</span> ${escapeHtml(
+      String(alert.expectedValue ?? "")
+    )}</p>`;
+  const scope = (label) =>
+    label
+      ? `<p class="inspector-atomic-alert__scope">${escapeHtml(label)}</p>`
+      : "";
+  let body = "";
+  if (c.id === "colorFill" && b) {
+    body += scope("Text color");
+    body += line(a);
+    body += scope("Fill / surface");
+    body += line(b);
+  } else {
+    body += line(a);
+  }
+  return `<div class="inspector-atomic-alert" id="${atomicId}" hidden role="region" aria-labelledby="${atomicId}-title">
+        <div class="inspector-atomic-alert__title" id="${atomicId}-title">Deviation detail</div>
+        ${body}
+      </div>`;
+}
+
+function renderInspectorSemanticCards(payload) {
+  if (!inspectorSemanticCards) return;
+  const pick = payload || {};
+  const cards = buildSemanticCardModels(pick);
+  const showAll = inspectorSemanticShowAll;
+  const issueRows = cards
+    .filter((c) => c.warn && c.alert)
+    .sort((a, b) => semanticIssueSeverity(b) - semanticIssueSeverity(a));
+  const hasIssues = issueRows.length > 0;
+
+  if (inspectorSemanticHint) {
+    inspectorSemanticHint.textContent = showAll
+      ? "Full list: every sampled property, sorted with issues first."
+      : hasIssues
+        ? `Up to ${SEMANTIC_ISSUE_CAP} highest-severity issues. “Show all properties” lists everything.`
+        : "No heuristic deviations on this pick — toggle below to inspect raw values.";
+  }
+
+  let filtered;
+  if (showAll) {
+    const passes = cards.filter((c) => !c.warn || !c.alert);
+    filtered = [...issueRows, ...passes];
+  } else {
+    filtered = issueRows.slice(0, SEMANTIC_ISSUE_CAP);
+  }
+  const parts = [];
+
+  if (!filtered.length && !showAll) {
+    parts.push(
+      `<p class="inspector-semantic-empty">No flagged deviations — values likely align with tokens (heuristic).</p>`
+    );
+  }
+
+  for (const c of filtered) {
+    const warn = Boolean(c.warn && c.alert);
+    const cur = escapeHtml(String(c.currentSemantic ?? ""));
+    const std = escapeHtml(
+      String(
+        c.id === "colorFill" && c.secondaryAlert
+          ? `Text: ${c.alert?.expectedValue ?? "—"} · Fill: ${c.secondaryAlert.expectedValue ?? "—"}`
+          : c.alert?.expectedValue ?? c.standardSemantic ?? "—"
+      )
+    );
+    const atomicId = `atomic-${c.id}`;
+    const atomic = warn && c.alert ? buildInspectorAtomicHtml(c, atomicId) : "";
+
+    if (warn) {
+      parts.push(`<div class="inspector-semantic-issue" role="listitem" data-semantic="${escapeHtml(
+        c.id
+      )}">
+        <button type="button" class="inspector-semantic-hit" aria-expanded="false" aria-controls="${atomicId}">
+          <span class="inspector-semantic-issue__label">${escapeHtml(
+            c.label
+          )}</span>
+          <span class="inspector-semantic-issue__cmp">
+            <span class="inspector-semantic-issue__cur"><em>Current</em> ${cur}</span>
+            <span class="inspector-semantic-issue__arr" aria-hidden="true">→</span>
+            <span class="inspector-semantic-issue__std"><em>Standard</em> ${std}</span>
+            <span class="inspector-semantic-issue__flag" aria-hidden="true">⚠️</span>
+          </span>
+        </button>
+        ${atomic}
+      </div>`);
+    } else {
+      parts.push(`<div class="inspector-semantic-pass" role="listitem" data-semantic="${escapeHtml(
+        c.id
+      )}">
+        <span class="inspector-semantic-pass__label">${escapeHtml(
+          c.label
+        )}</span>
+        <span class="inspector-semantic-pass__line"><em>Aligned</em> — ${escapeHtml(
+          String(c.currentSemantic ?? c.valueDisplay)
+        )}</span>
+      </div>`);
+    }
+  }
+  inspectorSemanticCards.innerHTML = parts.join("");
+}
+
+function initSemanticInspectorDelegation() {
+  if (!inspectorSemanticCards || inspectorSemanticCards.dataset.delegationBound)
+    return;
+  inspectorSemanticCards.dataset.delegationBound = "1";
+  inspectorSemanticCards.addEventListener("click", (e) => {
+    const btn = e.target.closest(".inspector-semantic-hit");
+    if (!btn) return;
+    const card = btn.closest(".inspector-semantic-issue");
+    const panel = card?.querySelector(".inspector-atomic-alert");
+    if (!panel) return;
+    const wasHidden = panel.hidden;
+    for (const el of inspectorSemanticCards.querySelectorAll(
+      ".inspector-atomic-alert"
+    )) {
+      el.hidden = true;
+    }
+    for (const b of inspectorSemanticCards.querySelectorAll(
+      ".inspector-semantic-hit"
+    )) {
+      b.setAttribute("aria-expanded", "false");
+    }
+    if (wasHidden) {
+      panel.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+    }
+  });
+}
+
+function renderSystemVerdictStrip(pick, pfPayload) {
+  const strip = document.getElementById("inspectorVerdictStrip");
+  const stateEl = document.getElementById("inspectorVerdictState");
+  if (!strip || !stateEl) return;
+  strip.hidden = false;
+  const alerts = pick?.designAlerts;
+  const hasDesign = Array.isArray(alerts) && alerts.length > 0;
+  const pfLoading =
+    pfPayload == null ||
+    (typeof pfPayload === "object" && pfPayload.loading === true);
+  const pfErr =
+    pfPayload &&
+    typeof pfPayload === "object" &&
+    !pfPayload.loading &&
+    pfPayload.error;
+  const pfAn =
+    pfPayload &&
+    typeof pfPayload === "object" &&
+    !pfPayload.loading &&
+    !pfErr
+      ? pfPayload.anomalies || []
+      : [];
+  const pfWarn = pfAn.some((x) =>
+    /warn/i.test(String(x?.level || ""))
+  );
+
+  if (hasDesign || pfWarn) {
+    strip.className = "inspector-verdict inspector-verdict--deviation";
+    stateEl.textContent = "Deviation";
+    return;
+  }
+
+  if (pfLoading) {
+    strip.className = "inspector-verdict inspector-verdict--loading";
+    stateEl.textContent = "Scanning…";
+    return;
+  }
+
+  strip.className = "inspector-verdict inspector-verdict--aligned";
+  stateEl.textContent = "Aligned";
+}
+
+function generateCartSummaryLine(pick) {
+  const p = pick || {};
+  const tag = String(p.tag || "element");
+  const sample = String(p.textSample || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 28);
+  const alerts = Array.isArray(p.designAlerts) ? p.designAlerts : [];
+  const label = sample ? `"${sample}"` : `<${tag}>`;
+  if (alerts.length === 0) {
+    return `Added to queue: ${label} (no literal-value warnings)`;
+  }
+  const a = alerts[0];
+  const map = {
+    SPACING_LITERAL: "hardcoded spacing",
+    COLOR_LITERAL: "hardcoded text color",
+    BG_LITERAL: "hardcoded background color",
+    INLINE_STYLE: "inline styles",
+    PF_CLASS_NO_PF_VAR: "PatternFly classes vs CSS variables",
+  };
+  const bit =
+    map[String(a.code)] ||
+    String(a.title || "").slice(0, 40) ||
+    "design-token mismatch";
+  return `Added: address ${bit} for ${label}`;
+}
+
+function renderWorkflowDeviationStrip(payload) {
+  if (!inspectorWorkflowDeviation) return;
+  const alerts = payload?.designAlerts;
+  if (!Array.isArray(alerts) || alerts.length === 0) {
+    inspectorWorkflowDeviation.hidden = true;
+    inspectorWorkflowDeviation.innerHTML = "";
+    return;
+  }
+  const priority = [
+    "spacing",
+    "color",
+    "fill",
+    "implementation",
+    "tokens",
+  ];
+  let a = null;
+  for (const id of priority) {
+    a = alerts.find((x) => x.semanticId === id);
+    if (a && (a.currentValue != null || a.expectedValue != null)) break;
+  }
+  if (!a) a = alerts[0];
+  const cur = a?.currentValue != null ? String(a.currentValue) : "";
+  const exp = a?.expectedValue != null ? String(a.expectedValue) : "";
+  if (!cur && !exp) {
+    inspectorWorkflowDeviation.hidden = true;
+    inspectorWorkflowDeviation.innerHTML = "";
+    return;
+  }
+  inspectorWorkflowDeviation.hidden = false;
+  inspectorWorkflowDeviation.innerHTML = `<div class="inspector-workflow__body"><span class="inspector-workflow__kv"><strong>Current:</strong> ${escapeHtml(
+    cur
+  )}</span><span class="inspector-workflow__sep"> · </span><span class="inspector-workflow__kv"><strong>Expected:</strong> ${escapeHtml(
+    exp
+  )}</span></div>`;
+}
+
+function formatAuditEntriesHtml(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return '<p class="inspector-audit-empty">No commits for this path in this clone.</p>';
+  }
+  const head = entries[0];
+  const rel = relativeTimeFromYmd(head.date);
+  const issue = extractIssueRef(head.subject);
+  const subj = escapeHtml(head.subject || "");
+  const issueBit = issue
+    ? ` <span class="inspector-audit-issue">· Issue #${escapeHtml(issue)}</span>`
+    : "";
+  const more = entries
+    .slice(1, 6)
+    .map(
+      (e) =>
+        `<li><span class="inspector-audit-meta">${escapeHtml(
+          e.date || ""
+        )}</span> · ${escapeHtml(e.subject || "")}</li>`
+    )
+    .join("");
+  return `<div class="inspector-audit-highlight">
+    <p class="inspector-audit-line"><strong>Last touch:</strong> ${escapeHtml(
+      head.author || "—"
+    )} <span class="inspector-audit-when">(${escapeHtml(rel)})</span></p>
+    <p class="inspector-audit-line"><strong>Purpose:</strong> <span class="inspector-audit-subj">${subj}</span>${issueBit}</p>
+  </div>
+  ${
+    more
+      ? `<p class="inspector-audit-earlier"><strong>Earlier:</strong></p><ul class="inspector-audit-list">${more}</ul>`
+      : ""
+  }`;
+}
+
+function populateInspectorGitFileSelect() {
+  if (!inspectorGitFile) return;
+  const files = Array.isArray(lastPrExportMeta?.changedFiles)
+    ? lastPrExportMeta.changedFiles
+    : [];
+  const prev = inspectorGitFile.value;
+  inspectorGitFile.innerHTML = "";
+  const opt0 = document.createElement("option");
+  opt0.value = "";
+  opt0.textContent = files.length
+    ? "Select a PR file…"
+    : "No changed files (load a PR preview)";
+  inspectorGitFile.appendChild(opt0);
+  const sorted = [...files].sort((a, b) => {
+    const fa = a?.filename || "";
+    const fb = b?.filename || "";
+    const ua = isLikelyUiPath(fa) ? 0 : 1;
+    const ub = isLikelyUiPath(fb) ? 0 : 1;
+    if (ua !== ub) return ua - ub;
+    return String(fa).localeCompare(String(fb));
+  });
+  for (const f of sorted) {
+    const fn = f?.filename;
+    if (!fn) continue;
+    const o = document.createElement("option");
+    o.value = fn;
+    const st = (f.status && String(f.status)) || "";
+    o.textContent = st ? `${st} · ${fn}` : fn;
+    inspectorGitFile.appendChild(o);
+  }
+  if (prev && [...inspectorGitFile.options].some((op) => op.value === prev)) {
+    inspectorGitFile.value = prev;
+  }
+}
+
+function clearInspectorInsightPanels() {
+  if (inspectorSemanticCards) inspectorSemanticCards.innerHTML = "";
+  if (inspectorAuditContext) inspectorAuditContext.innerHTML = "";
+  const strip = document.getElementById("inspectorVerdictStrip");
+  if (strip) strip.hidden = true;
+  if (inspectorWorkflowDeviation) {
+    inspectorWorkflowDeviation.hidden = true;
+    inspectorWorkflowDeviation.innerHTML = "";
+  }
+}
+
 function renderPendingPickUi(payload) {
   if (!inspectorPickPanel) return;
+  lastPfInsightPayload = null;
+  inspectorSemanticShowAll = false;
+  if (btnInspectorToggleAllProps) {
+    btnInspectorToggleAllProps.setAttribute("aria-pressed", "false");
+    btnInspectorToggleAllProps.textContent = "Show all properties";
+  }
   inspectorPickPanel.hidden = false;
   const dataUrl = payload?.previewDataUrl;
   if (inspectorPickThumb && inspectorPickPlaceholder) {
@@ -239,15 +723,11 @@ function renderPendingPickUi(payload) {
       inspectorPickPlaceholder.hidden = false;
     }
   }
-  if (inspectorPickJson) {
-    inspectorPickJson.textContent = JSON.stringify(
-      sanitizePickForJsonDisplay(payload || {}),
-      null,
-      2
-    );
-  }
-  const det = inspectorPickPanel.querySelector(".inspector-pick-details");
-  if (det) det.open = false;
+  renderSystemVerdictStrip(payload || {}, null);
+  renderInspectorSemanticCards(payload || {});
+  initSemanticInspectorDelegation();
+  renderWorkflowDeviationStrip(payload || {});
+  populateInspectorGitFileSelect();
 }
 
 function clearPendingPickUi() {
@@ -257,395 +737,16 @@ function clearPendingPickUi() {
     inspectorPickThumb.hidden = true;
   }
   if (inspectorPickPlaceholder) inspectorPickPlaceholder.hidden = false;
-  if (inspectorPickJson) inspectorPickJson.textContent = "";
+  clearInspectorInsightPanels();
 }
 
 function syncPendingPickUi() {
   const hasPick = pendingPick != null;
-  if (inspectorSessionAddWrap) inspectorSessionAddWrap.hidden = !hasPick;
+  if (inspectorSessionAddWrap) inspectorSessionAddWrap.hidden = true;
+  if (inspectorPickWorkflow) inspectorPickWorkflow.hidden = !hasPick;
   if (hasPick && sessionPickFeedback && !sessionPickFeedback.value.trim()) {
     /* keep placeholder focus optional */
   }
-}
-
-function clearPfInsights() {
-  lastPfAuditPayload = null;
-  lastSyncPfDescribe = null;
-  lastUiReviewHints = { items: [], viewport: null };
-  if (pfInsightsPanel) pfInsightsPanel.hidden = true;
-  if (pfInsightsStatus) {
-    pfInsightsStatus.hidden = true;
-    pfInsightsStatus.textContent = "";
-    pfInsightsStatus.className = "pf-insights__status";
-  }
-  if (pfInsightsList) pfInsightsList.innerHTML = "";
-  if (pfIssuesEmpty) pfIssuesEmpty.hidden = true;
-  if (pfIssuesBlock) pfIssuesBlock.hidden = true;
-  if (pfIdentityBlock) pfIdentityBlock.hidden = true;
-  if (pfIdentityBody) pfIdentityBody.replaceChildren();
-  if (pfPassesBlock) pfPassesBlock.hidden = true;
-  if (pfPassesList) pfPassesList.innerHTML = "";
-  if (handoffDraftTa) handoffDraftTa.value = "";
-  if (pfInsightsNextSteps) pfInsightsNextSteps.hidden = true;
-  if (pfInsightsNextStepsPre) pfInsightsNextStepsPre.textContent = "";
-}
-
-function initUiReviewManualList() {
-  if (!uiReviewManualList) return;
-  uiReviewManualList.innerHTML = "";
-  for (const row of MANUAL_CHECKLIST_DEF) {
-    const li = document.createElement("li");
-    li.className = "ui-review-manual__item";
-    const lab = document.createElement("label");
-    lab.className = "ui-review-manual__label";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.dataset.checkId = row.id;
-    cb.className = "ui-review-manual__cb";
-    lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(` ${row.label}`));
-    li.appendChild(lab);
-    uiReviewManualList.appendChild(li);
-  }
-}
-
-function resetManualChecklistUi() {
-  if (!uiReviewManualList) return;
-  uiReviewManualList.querySelectorAll('input[type="checkbox"]').forEach((el) => {
-    el.checked = false;
-  });
-}
-
-function getManualChecklistState() {
-  /** @type {Record<string, boolean>} */
-  const out = {};
-  if (!uiReviewManualList) return out;
-  uiReviewManualList.querySelectorAll('input[type="checkbox"]').forEach((el) => {
-    const id = el.dataset.checkId;
-    if (id) out[id] = el.checked;
-  });
-  return out;
-}
-
-const UI_REVIEW_CAT_LABEL = {
-  a11y: "Accessibility",
-  interaction: "Interaction",
-  responsive: "Responsive",
-  copy: "Copy & content",
-};
-
-function collectMergedAnomalies() {
-  /** @type {{ source: string; title: string; body: string; level: string }[]} */
-  const out = [];
-  const pf = lastPfAuditPayload;
-  if (pf && !pf.loading && Array.isArray(pf.anomalies)) {
-    for (const a of pf.anomalies) {
-      out.push({
-        source: "patternfly",
-        title: a.title || "",
-        body: a.body || "",
-        level: a.level || "warning",
-      });
-    }
-  }
-  for (const h of lastUiReviewHints.items || []) {
-    const cat = UI_REVIEW_CAT_LABEL[h.category] || h.category || "check";
-    out.push({
-      source: "heuristic",
-      title: `[${cat}] ${h.title || ""}`,
-      body: h.detail || "",
-      level: h.level === "warn" ? "warning" : "info",
-    });
-  }
-  return out;
-}
-
-function refreshIssuesPanel() {
-  if (!pfInsightsList || !pfIssuesBlock || !pfIssuesEmpty) return;
-  if (!pendingPick) {
-    pfIssuesBlock.hidden = true;
-    pfInsightsList.innerHTML = "";
-    return;
-  }
-  pfIssuesBlock.hidden = false;
-  const items = collectMergedAnomalies();
-  pfInsightsList.innerHTML = "";
-  if (items.length === 0) {
-    pfIssuesEmpty.hidden = false;
-  } else {
-    pfIssuesEmpty.hidden = true;
-    for (const it of items) {
-      const div = document.createElement("div");
-      div.className = `pf-insights__item pf-insights__item--${
-        it.level === "warning" ? "warn" : "info"
-      }`;
-      const h = document.createElement("strong");
-      h.className = "pf-insights__item-title";
-      h.textContent = it.title || "";
-      const p = document.createElement("p");
-      p.className = "pf-insights__item-body";
-      p.textContent = it.body || "";
-      div.appendChild(h);
-      div.appendChild(p);
-      pfInsightsList.appendChild(div);
-    }
-  }
-}
-
-function refreshIdentityBlock() {
-  if (!pfIdentityBlock || !pfIdentityBody) return;
-  const pick = pendingPick;
-  if (!pick) {
-    pfIdentityBlock.hidden = true;
-    pfIdentityBody.replaceChildren();
-    return;
-  }
-  pfIdentityBlock.hidden = false;
-  pfIdentityBody.replaceChildren();
-
-  const aud = lastPfAuditPayload;
-  const loading = aud?.loading === true;
-  const idFromAud =
-    aud && !loading && aud.identity ? aud.identity : null;
-  const idFromSync = lastSyncPfDescribe?.identity;
-  const id = idFromAud || idFromSync;
-  const notPfMsg =
-    (aud && !loading && aud.notPfMessage) ||
-    (lastSyncPfDescribe &&
-      lastSyncPfDescribe.isPf === false &&
-      lastSyncPfDescribe.notPfMessage);
-
-  if (notPfMsg && !id) {
-    const p = document.createElement("p");
-    p.textContent = notPfMsg;
-    pfIdentityBody.appendChild(p);
-  } else if (id) {
-    const t = document.createElement("p");
-    const bold = document.createElement("strong");
-    bold.textContent = id.displayName || "PatternFly";
-    t.appendChild(bold);
-    t.appendChild(
-      document.createTextNode(` (${id.kind || "component"})`)
-    );
-    pfIdentityBody.appendChild(t);
-    if (id.pathSeg) {
-      const pp = document.createElement("p");
-      pp.className = "pf-identity__path";
-      const c = document.createElement("code");
-      c.textContent = id.pathSeg;
-      pp.appendChild(document.createTextNode("Docs path: "));
-      pp.appendChild(c);
-      pfIdentityBody.appendChild(pp);
-    }
-    const href = String(id.docUrl || "").trim();
-    if (
-      href.startsWith("https://www.patternfly.org") ||
-      href.startsWith("https://patternfly.org")
-    ) {
-      const a = document.createElement("a");
-      a.href = href;
-      a.className = "pf-insights__doc-link";
-      a.textContent = id.docLabel || "Open PatternFly documentation";
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      pfIdentityBody.appendChild(a);
-    }
-    const hint = document.createElement("p");
-    hint.className = "field-hint field-hint--tight";
-    let ht =
-      (idFromAud?.hint || id.hint || "").trim();
-    if (loading) ht += (ht ? " " : "") + "Updating after MCP…";
-    if (
-      idFromAud &&
-      idFromAud.mcpReachable === false
-    ) {
-      ht += (ht ? " " : "") + "MCP unreachable; link is a fallback.";
-    }
-    if (ht) {
-      hint.textContent = ht;
-      pfIdentityBody.appendChild(hint);
-    }
-    if (id.primaryClass) {
-      const pc = document.createElement("p");
-      pc.className = "pf-identity__meta";
-      pc.appendChild(document.createTextNode("PF class token: "));
-      const code = document.createElement("code");
-      code.textContent = id.primaryClass;
-      pc.appendChild(code);
-      pfIdentityBody.appendChild(pc);
-    }
-  }
-
-  const tagLine = document.createElement("p");
-  tagLine.className = "pf-identity__meta";
-  tagLine.textContent = `HTML <${pick.tag || "?"}> · selector: ${String(pick.selector || "").slice(0, 200) || "n/a"}`;
-  pfIdentityBody.appendChild(tagLine);
-
-  const src = document.createElement("p");
-  src.className = "field-hint field-hint--tight";
-  src.textContent =
-    "Source file:line — not available yet (needs source maps / dev integration).";
-  pfIdentityBody.appendChild(src);
-}
-
-function refreshPassesPanel() {
-  if (!pfPassesBlock || !pfPassesList) return;
-  const aud = lastPfAuditPayload;
-  const passes =
-    aud && !aud.loading && Array.isArray(aud.passes) ? aud.passes : [];
-  if (!passes.length) {
-    pfPassesBlock.hidden = true;
-    pfPassesList.innerHTML = "";
-    return;
-  }
-  pfPassesBlock.hidden = false;
-  pfPassesList.innerHTML = "";
-  for (const p of passes) {
-    const li = document.createElement("li");
-    li.className = "pf-passes-list__item";
-    li.textContent = `✓ ${p.label || ""}`;
-    pfPassesList.appendChild(li);
-  }
-}
-
-function buildHandoffDraftText() {
-  const lines = [];
-  lines.push("### UX / design review (Snappi)");
-  if (lastPrExportMeta?.htmlUrl) lines.push(`PR: ${lastPrExportMeta.htmlUrl}`);
-  if (lastPrExportMeta?.previewUrl)
-    lines.push(`Preview: ${lastPrExportMeta.previewUrl}`);
-  if (pendingPick) {
-    lines.push(
-      `Pick: <${pendingPick.tag}> \`${String(pendingPick.className || "").slice(0, 220)}\``
-    );
-  }
-  lines.push("");
-  const id = lastPfAuditPayload?.identity || lastSyncPfDescribe?.identity;
-  if (id?.displayName) {
-    lines.push(
-      `PatternFly topic: **${id.displayName}** (${id.kind || "component"})`
-    );
-  }
-  if (lastPfAuditPayload?.notPfMessage) {
-    lines.push(lastPfAuditPayload.notPfMessage);
-  }
-  lines.push("");
-  lines.push("**Issues**");
-  const merged = collectMergedAnomalies();
-  if (!merged.length) lines.push("_None auto-detected._");
-  else {
-    for (const m of merged) {
-      lines.push(`- **${m.title}** — ${m.body}`);
-    }
-  }
-  lines.push("");
-  lines.push("**Looks OK (auto)**");
-  const passes = lastPfAuditPayload?.passes || [];
-  if (!passes.length) lines.push("_None listed for this pick._");
-  else {
-    for (const p of passes) lines.push(`- ✓ ${p.label}`);
-  }
-  return lines.join("\n");
-}
-
-function refreshHandoffDraft() {
-  if (!handoffDraftTa || !pendingPick) return;
-  handoffDraftTa.value = buildHandoffDraftText();
-}
-
-async function hydratePfDescribeForPick() {
-  if (!pendingPick || !window.snappi?.describePfPick) {
-    lastSyncPfDescribe = null;
-    refreshIdentityBlock();
-    refreshHandoffDraft();
-    return;
-  }
-  try {
-    lastSyncPfDescribe = await window.snappi.describePfPick(
-      pendingPick.className || ""
-    );
-  } catch {
-    lastSyncPfDescribe = null;
-  }
-  refreshIdentityBlock();
-  refreshHandoffDraft();
-}
-
-function syncViewportPresetButtons() {
-  if (!uiReviewViewportRow) return;
-  const w = lastPrExportMeta?.previewSimulatedWidth;
-  uiReviewViewportRow.querySelectorAll("[data-snappi-vp]").forEach((btn) => {
-    const raw = btn.getAttribute("data-snappi-vp");
-    const active =
-      raw === "fill" ? w == null : Number(raw) === w;
-    btn.classList.toggle("ui-review-vp--active", Boolean(active));
-    btn.setAttribute("aria-pressed", active ? "true" : "false");
-  });
-}
-
-function initUiReviewViewportHandlers() {
-  if (!uiReviewViewportRow || !window.snappi?.setPreviewSimulatedViewport) return;
-  uiReviewViewportRow.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-snappi-vp]");
-    if (!btn) return;
-    const raw = btn.getAttribute("data-snappi-vp");
-    const width = raw === "fill" ? null : Number(raw);
-    void (async () => {
-      const res = await window.snappi.setPreviewSimulatedViewport(width);
-      if (!res?.ok) {
-        showError(res?.error || "Could not resize preview.");
-        return;
-      }
-      showError("");
-      if (lastPrExportMeta) {
-        lastPrExportMeta.previewSimulatedWidth =
-          res.width !== undefined ? res.width : null;
-      }
-      syncViewportPresetButtons();
-    })();
-  });
-}
-
-/** @param {object | null} pf */
-function clonePfForExport(pf) {
-  if (!pf || pf.loading || typeof pf !== "object") return null;
-  const nt = String(pf.nextStepsTemplate || "").trim();
-  if (
-    pf.identity ||
-    (pf.anomalies && pf.anomalies.length) ||
-    (pf.passes && pf.passes.length) ||
-    pf.notPfMessage
-  ) {
-    return {
-      identity: pf.identity || null,
-      anomalies: Array.isArray(pf.anomalies) ? pf.anomalies : [],
-      passes: Array.isArray(pf.passes) ? pf.passes : [],
-      notPfMessage: pf.notPfMessage || null,
-      nextStepsTemplate: nt ? nt.slice(0, 12000) : "",
-    };
-  }
-  const insights = Array.isArray(pf.insights)
-    ? pf.insights.map((i) => ({
-        level: i.level,
-        title: i.title,
-        body: i.body,
-        docUrl: i.docUrl,
-      }))
-    : [];
-  if (!insights.length && !nt) return null;
-  return {
-    insights,
-    nextStepsTemplate: nt ? nt.slice(0, 12000) : "",
-  };
-}
-
-function formatManualForMarkdown(state) {
-  const lines = [];
-  for (const row of MANUAL_CHECKLIST_DEF) {
-    const on = Boolean(state[row.id]);
-    lines.push(`- [${on ? "x" : " "}] ${row.label}`);
-  }
-  return lines.join("\n");
 }
 
 function formatUiHintsForMarkdown(items) {
@@ -656,62 +757,6 @@ function formatUiHintsForMarkdown(items) {
       return `- **${it.title}** ${lv} ${it.detail || ""}`.trim();
     })
     .join("\n");
-}
-
-function formatPfSnapshotForMarkdown(pf) {
-  if (!pf || typeof pf !== "object") {
-    return "_No PatternFly snapshot for this pick._";
-  }
-  if (
-    pf.identity ||
-    (pf.anomalies && pf.anomalies.length) ||
-    (pf.passes && pf.passes.length) ||
-    pf.notPfMessage
-  ) {
-    const parts = [];
-    if (pf.identity) {
-      const id = pf.identity;
-      parts.push(
-        `**Component:** ${id.displayName || "?"} (${id.kind || "component"})`
-      );
-      if (id.docUrl) parts.push(`**Docs:** ${id.docUrl}`);
-    }
-    if (pf.notPfMessage) parts.push(pf.notPfMessage);
-    if (pf.anomalies?.length) {
-      parts.push("**Issues:**");
-      for (const a of pf.anomalies) {
-        parts.push(`- **${a.title}:** ${a.body || ""}`);
-      }
-    }
-    if (pf.passes?.length) {
-      parts.push("**Auto-OK:**");
-      for (const p of pf.passes) parts.push(`- ✓ ${p.label || ""}`);
-    }
-    if (pf.nextStepsTemplate) {
-      parts.push("");
-      parts.push("**Full template:**");
-      parts.push("```text");
-      parts.push(pf.nextStepsTemplate);
-      parts.push("```");
-    }
-    return parts.join("\n");
-  }
-  if (!pf.insights?.length && !pf.nextStepsTemplate) {
-    return "_No PatternFly design hints captured for this pick._";
-  }
-  const parts = [];
-  const rows = designerFriendlyPfInsights(pf.insights || []);
-  for (const r of rows) {
-    parts.push(`- **${r.title}:** ${r.body || ""}`);
-  }
-  if (pf.nextStepsTemplate) {
-    parts.push("");
-    parts.push("**Handoff template:**");
-    parts.push("```text");
-    parts.push(pf.nextStepsTemplate);
-    parts.push("```");
-  }
-  return parts.join("\n");
 }
 
 function pickSummaryLines(pick) {
@@ -747,9 +792,10 @@ async function resolveHintsForSessionItem(it) {
   }
 }
 
-async function resolvePfForSessionItem(it) {
-  if (it?.pfSnapshot && typeof it.pfSnapshot === "object") return it.pfSnapshot;
-  return null;
+function pickForAnalyze(pick) {
+  if (!pick || typeof pick !== "object") return {};
+  const { previewDataUrl: _omit, ...rest } = pick;
+  return rest;
 }
 
 async function buildSessionExportMarkdown() {
@@ -786,6 +832,10 @@ async function buildSessionExportMarkdown() {
       const it = items[i];
       lines.push(`### Pick ${i + 1}`);
       lines.push("");
+      if (it.cartSummary) {
+        lines.push(`**Auto summary:** ${it.cartSummary}`);
+        lines.push("");
+      }
       lines.push(pickSummaryLines(it.pick));
       lines.push("");
       if (it.feedback) {
@@ -798,208 +848,50 @@ async function buildSessionExportMarkdown() {
       const hints = await resolveHintsForSessionItem(it);
       lines.push(formatUiHintsForMarkdown(hints));
       lines.push("");
-      lines.push("**Manual checklist (at save time):**");
-      lines.push("");
-      lines.push(formatManualForMarkdown(it.manualChecklist || {}));
-      lines.push("");
-      const pfs = await resolvePfForSessionItem(it);
-      if (pfs) {
-        lines.push("**Design system (PatternFly) notes:**");
-        lines.push("");
-        lines.push(formatPfSnapshotForMarkdown(pfs));
-        lines.push("");
-      }
       lines.push("---");
       lines.push("");
     }
   }
 
   const draftFeedback = sessionPickFeedback?.value?.trim() || "";
-  const draftManual = getManualChecklistState();
-  const anyManual = Object.values(draftManual).some(Boolean);
-  if (pendingPick && (draftFeedback || anyManual)) {
+  if (pendingPick && draftFeedback) {
+    let draftHints = [];
+    try {
+      const r = await window.snappi?.analyzePickForReview?.(
+        pickForAnalyze(pendingPick)
+      );
+      draftHints = Array.isArray(r?.items) ? r.items : [];
+    } catch {
+      draftHints = [];
+    }
     lines.push("### Draft (not yet added to session)");
     lines.push("");
     lines.push(pickSummaryLines(pendingPick));
     lines.push("");
-    if (draftFeedback) {
-      lines.push("**Feedback (draft):**");
-      lines.push(draftFeedback);
-      lines.push("");
-    }
+    lines.push("**Feedback (draft):**");
+    lines.push(draftFeedback);
+    lines.push("");
     lines.push("**Automated UI hints (current pick):**");
     lines.push("");
-    lines.push(formatUiHintsForMarkdown(lastUiReviewHints.items));
+    lines.push(formatUiHintsForMarkdown(draftHints));
     lines.push("");
-    lines.push("**Manual checklist (current):**");
-    lines.push("");
-    lines.push(formatManualForMarkdown(draftManual));
-    lines.push("");
-    if (lastPfInsightsForExport) {
-      lines.push("**Design system (PatternFly) notes (current):**");
-      lines.push("");
-      lines.push(
-        formatPfSnapshotForMarkdown(clonePfForExport(lastPfInsightsForExport))
-      );
-      lines.push("");
-    }
   }
 
   lines.push("—");
-  lines.push("*Exported from Snappi — paste into a GitHub PR comment or your issue tracker.*");
+  lines.push("*Sent from Snappi.*");
   return lines.join("\n");
-}
-
-/**
- * Map MCP/token-heavy insight rows to short, designer-friendly copy.
- * @param {{ level: string; title: string; body: string; docUrl?: string; docLabel?: string }[]} items
- */
-function designerFriendlyPfInsights(items) {
-  if (!items || !items.length) return [];
-  const out = [];
-  for (const it of items) {
-    const title = String(it.title || "").trim();
-    const level = it.level || "info";
-
-    if (title === "Official documentation") {
-      out.push({
-        level: "info",
-        title: "Which PatternFly page?",
-        body: String(it.body || "").trim(),
-        docUrl: it.docUrl,
-        docLabel: it.docLabel,
-      });
-      continue;
-    }
-    if (title === "MCP documentation") {
-      continue;
-    }
-    if (title === "PatternFly MCP unavailable") {
-      out.push({
-        level: "warning",
-        title: "Docs did not load",
-        body: "The PatternFly doc check could not run. Your pick is still saved—you can continue adding feedback.",
-      });
-      continue;
-    }
-    if (title === "PatternFly MCP") {
-      out.push({
-        level,
-        title: "Not a PatternFly block",
-        body: "This selection does not look like a standard PatternFly component. Pick a UI block with PatternFly styling if you want automatic checks.",
-      });
-      continue;
-    }
-    if (/^(padding|margin|gap)\b/i.test(title)) {
-      out.push({
-        level,
-        title: title.replace(/px/g, " px"),
-        body: String(it.body || "").trim(),
-      });
-      continue;
-    }
-    out.push({
-      level,
-      title,
-      body: String(it.body || "").trim(),
-      docUrl: it.docUrl,
-      docLabel: it.docLabel,
-    });
-  }
-  return out;
-}
-
-/**
- * @param {{
- *   loading?: boolean;
- *   error?: string;
- *   identity?: object | null;
- *   notPfMessage?: string | null;
- *   anomalies?: { level: string; title: string; body: string }[];
- *   passes?: { id: string; label: string }[];
- *   nextStepsTemplate?: string;
- * }} payload
- */
-function renderPatternFlyInsights(payload) {
-  if (!pfInsightsPanel) return;
-  pfInsightsPanel.hidden = false;
-  lastPfAuditPayload = payload;
-
-  if (payload.loading) {
-    lastPfInsightsForExport = null;
-    if (pfInsightsStatus) {
-      pfInsightsStatus.hidden = false;
-      pfInsightsStatus.className =
-        "pf-insights__status pf-insights__status--info";
-      pfInsightsStatus.textContent = "Running PatternFly MCP…";
-    }
-    if (pfInsightsNextSteps) pfInsightsNextSteps.hidden = true;
-    if (pfInsightsNextStepsPre) pfInsightsNextStepsPre.textContent = "";
-    refreshIdentityBlock();
-    refreshIssuesPanel();
-    refreshPassesPanel();
-    return;
-  }
-
-  if (pfInsightsStatus) {
-    pfInsightsStatus.hidden = true;
-    pfInsightsStatus.textContent = "";
-    pfInsightsStatus.className = "pf-insights__status";
-    const hasAny =
-      (payload.anomalies && payload.anomalies.length > 0) ||
-      payload.identity ||
-      payload.notPfMessage;
-    if (payload.error && !hasAny) {
-      pfInsightsStatus.hidden = false;
-      pfInsightsStatus.className =
-        "pf-insights__status pf-insights__status--warn";
-      pfInsightsStatus.textContent =
-        "PatternFly check failed — see Issues if any.";
-    }
-  }
-
-  refreshIdentityBlock();
-  refreshIssuesPanel();
-  refreshPassesPanel();
-  refreshHandoffDraft();
-
-  const ns = payload.nextStepsTemplate;
-  if (
-    pfInsightsNextSteps &&
-    pfInsightsNextStepsPre &&
-    typeof ns === "string" &&
-    ns.trim()
-  ) {
-    pfInsightsNextSteps.hidden = false;
-    pfInsightsNextStepsPre.textContent = ns.trim();
-  } else if (pfInsightsNextSteps) {
-    pfInsightsNextSteps.hidden = true;
-    if (pfInsightsNextStepsPre) pfInsightsNextStepsPre.textContent = "";
-  }
-  lastPfInsightsForExport = { ...payload };
 }
 
 function updateExportButtonsState() {
   const hasPr = Boolean(lastPrExportMeta?.htmlUrl);
-  const hasSession = loadSessionItems().length > 0;
-  const draftText = sessionPickFeedback?.value?.trim() || "";
-  const anyManual = Object.values(getManualChecklistState()).some(Boolean);
-  const hasDraft = Boolean(pendingPick && (draftText || anyManual));
-  if (btnOpenPrOnGithub) {
-    btnOpenPrOnGithub.hidden = !hasPr;
-    btnOpenPrOnGithub.disabled = !hasPr;
-  }
-  if (btnCopyGithubMarkdown) {
-    btnCopyGithubMarkdown.disabled = !(hasSession || hasDraft || hasPr);
+  if (btnPostFeedbackToPr) {
+    btnPostFeedbackToPr.disabled = !hasPr;
   }
 }
 
 function clearPendingPick() {
   pendingPick = null;
   clearPendingPickUi();
-  clearPfInsights();
-  lastPfInsightsForExport = null;
-  resetManualChecklistUi();
   if (sessionPickFeedback) sessionPickFeedback.value = "";
   syncPendingPickUi();
   syncInspectorSessionCardVisibility();
@@ -1012,7 +904,7 @@ function renderSessionList() {
   inspectorSessionList.innerHTML = "";
   for (const it of items) {
     const li = document.createElement("li");
-    li.className = "inspector-session-item";
+    li.className = "inspector-session-item inspector-cart-item";
     const p = it.pick || {};
 
     const thumbWrap = document.createElement("div");
@@ -1034,15 +926,10 @@ function renderSessionList() {
     const body = document.createElement("div");
     body.className = "inspector-session-item__body";
 
-    const details = document.createElement("details");
-    details.className = "inspector-session-item__details";
-    const sum = document.createElement("summary");
-    sum.textContent = "Pick details (JSON)";
-    const pre = document.createElement("pre");
-    pre.className = "inspector-session-item__json";
-    pre.textContent = JSON.stringify(sanitizePickForJsonDisplay(p), null, 2);
-    details.appendChild(sum);
-    details.appendChild(pre);
+    const summaryLine = document.createElement("p");
+    summaryLine.className = "inspector-cart-item__summary";
+    summaryLine.textContent =
+      it.cartSummary || generateCartSummaryLine(p);
 
     const ta = document.createElement("textarea");
     ta.className = "inspector-session-item__feedback-input";
@@ -1072,13 +959,16 @@ function renderSessionList() {
       syncInspectorSessionCardVisibility();
     });
 
-    body.appendChild(details);
+    body.appendChild(summaryLine);
     body.appendChild(ta);
     body.appendChild(rm);
 
     li.appendChild(thumbWrap);
     li.appendChild(body);
     inspectorSessionList.appendChild(li);
+  }
+  if (inspectorSessionCount) {
+    inspectorSessionCount.textContent = String(items.length);
   }
 }
 
@@ -1274,8 +1164,39 @@ function schedulePrTourHighlightsFromSwitch() {
   }, PR_TOUR_HIGHLIGHT_DEBOUNCE_MS);
 }
 
-/** Show inspector shell while picking, or when there is a draft pick / saved session rows. */
+function updateAiDockToggleUi(visible) {
+  if (!btnAiAssistantToggle) return;
+  const on = Boolean(visible);
+  btnAiAssistantToggle.setAttribute("aria-pressed", on ? "true" : "false");
+  btnAiAssistantToggle.classList.toggle("ai-toggle--on", on);
+  btnAiAssistantToggle.textContent = on ? "Hide AI assistant" : "AI assistant";
+}
+
+async function applyStoredAiDockVisibility() {
+  if (!isDesktopShell || !window.snappi?.setAiDockVisible) return;
+  const stored = localStorage.getItem(AI_DOCK_VISIBLE_KEY);
+  const visible = stored === "1";
+  try {
+    await window.snappi.setAiDockVisible(visible);
+  } catch {
+    /* ignore */
+  }
+  updateAiDockToggleUi(visible);
+}
+
+/**
+ * Preview & inspector only apply to an active PR preview (BrowserView + dev server).
+ * Without a running preview tab, keep the card hidden — e.g. stale session in
+ * localStorage must not open this panel on cold start.
+ */
+function hasActivePrPreview() {
+  return document.documentElement.classList.contains("snappi-has-preview");
+}
+
+/** Show inspector shell only when a preview is running and the user is engaged. */
 function inspectorShellShouldBeVisible() {
+  if (!isDesktopShell) return false;
+  if (!hasActivePrPreview()) return false;
   if (inspectorModeOn) return true;
   if (pendingPick != null) return true;
   return loadSessionItems().length > 0;
@@ -1529,7 +1450,6 @@ function syncPreviewPrMetaBar(payload) {
     previewPrMetaBar.hidden = true;
     if (prChangedFilesCard) prChangedFilesCard.hidden = true;
     lastPrExportMeta = null;
-    syncViewportPresetButtons();
     updateExportButtonsState();
     return;
   }
@@ -1540,6 +1460,13 @@ function syncPreviewPrMetaBar(payload) {
     htmlUrl: meta.htmlUrl,
     previewUrl: activeTab?.url || "",
     previewSimulatedWidth: meta.previewSimulatedWidth ?? null,
+    changedFiles: Array.isArray(meta.changedFiles) ? meta.changedFiles : [],
+    changedFilesTotal:
+      typeof meta.changedFilesTotal === "number"
+        ? meta.changedFilesTotal
+        : (meta.changedFiles || []).length,
+    changedFilesTruncated: Boolean(meta.changedFilesTruncated),
+    filesDiffUrl: String(meta.filesDiffUrl || "").trim(),
   };
   previewPrMetaBar.hidden = false;
   if (previewPrMetaTitle) {
@@ -1562,8 +1489,11 @@ function syncPreviewPrMetaBar(payload) {
     prChangedFilesCard.hidden = !isDesktopShell;
     syncPrChangedFilesPanel(meta);
   }
-  syncViewportPresetButtons();
+  populateInspectorGitFileSelect();
   updateExportButtonsState();
+  if (isDesktopShell && previewPrMetaBar && !previewPrMetaBar.hidden) {
+    void applyStoredAiDockVisibility();
+  }
 }
 
 function onPreviewPaneAttached() {
@@ -1583,6 +1513,7 @@ function onPreviewPaneAttached() {
   }
   renderSessionList();
   schedulePrTourHighlightsFromSwitch();
+  void applyStoredAiDockVisibility();
 }
 
 function applyPreviewTabsPayload(payload) {
@@ -1600,6 +1531,16 @@ function applyPreviewTabsPayload(payload) {
     }
     syncPreviewPrMetaBar({ tabs: [], activePrMeta: null });
     syncInspectorSessionCardVisibility();
+    void (async () => {
+      if (isDesktopShell && window.snappi?.setAiDockVisible) {
+        try {
+          await window.snappi.setAiDockVisible(false);
+        } catch {
+          /* ignore */
+        }
+      }
+      updateAiDockToggleUi(false);
+    })();
     return;
   }
 
@@ -1892,7 +1833,7 @@ function formatPrRunError(message) {
 
   const low = m.toLowerCase();
   if (
-    /couldn't find remote ref|could not find remote ref|unable to find|找不到远程引用|无法找到远程引用|pull\/\d+\/head/.test(
+    /couldn't find remote ref|could not find remote ref|unable to find|pull\/\d+\/head/.test(
       low
     )
   ) {
@@ -2000,21 +1941,29 @@ function closeSettingsView() {
 linkSettings?.addEventListener("click", () => void openSettingsView());
 btnSettingsBack?.addEventListener("click", () => closeSettingsView());
 
-btnSessionAdd?.addEventListener("click", () => {
+btnSessionAdd?.addEventListener("click", async () => {
   if (!pendingPick) {
     showError("Pick an element in inspector mode first.");
     return;
   }
   const feedback = sessionPickFeedback?.value?.trim() || "";
+  let hintItems = [];
+  try {
+    const r = await window.snappi?.analyzePickForReview?.(
+      pickForAnalyze(pendingPick)
+    );
+    hintItems = Array.isArray(r?.items) ? r.items : [];
+  } catch {
+    hintItems = [];
+  }
   const items = loadSessionItems();
   items.push({
     id: sessionItemId(),
     pick: pendingPick,
     feedback,
     at: new Date().toISOString(),
-    manualChecklist: getManualChecklistState(),
-    uiHintsSnapshot: { items: [...(lastUiReviewHints.items || [])] },
-    pfSnapshot: clonePfForExport(lastPfInsightsForExport),
+    uiHintsSnapshot: { items: hintItems },
+    cartSummary: generateCartSummaryLine(pendingPick),
   });
   saveSessionItems(items);
   renderSessionList();
@@ -2032,46 +1981,31 @@ btnSessionClear?.addEventListener("click", () => {
   showInfo("Session cleared.", 2500);
 });
 
-btnHandoffRefresh?.addEventListener("click", () => {
-  refreshHandoffDraft();
-  showInfo("Comment draft regenerated.", 2000);
-});
-
-btnHandoffCopy?.addEventListener("click", async () => {
-  if (!window.snappi?.writeClipboardText || !handoffDraftTa) return;
-  const text = handoffDraftTa.value.trim();
-  if (!text) {
-    showError("Nothing to copy — pick an element and wait for MCP.");
+btnPostFeedbackToPr?.addEventListener("click", async () => {
+  if (!window.snappi?.postPrComment) return;
+  const prUrl = String(lastPrExportMeta?.htmlUrl || "").trim();
+  if (!prUrl) {
+    showError("No GitHub PR is loaded.");
     return;
   }
-  const res = await window.snappi.writeClipboardText(text);
-  if (!res?.ok) {
-    showError(res?.error || "Could not copy.");
-    return;
-  }
-  showError("");
-  showInfo("Comment text copied.", 2500);
-});
-
-btnCopyGithubMarkdown?.addEventListener("click", async () => {
-  if (!window.snappi?.writeClipboardText) return;
+  btnPostFeedbackToPr.disabled = true;
   try {
     const md = await buildSessionExportMarkdown();
-    const res = await window.snappi.writeClipboardText(md);
+    const res = await window.snappi.postPrComment({
+      prHtmlUrl: prUrl,
+      body: md,
+    });
     if (!res?.ok) {
-      showError(res?.error || "Could not copy to clipboard.");
+      showError(res?.error || "Could not post comment.");
       return;
     }
     showError("");
-    showInfo("Markdown copied — paste into GitHub or your ticket.", 3500);
+    showInfo("Feedback posted to the PR on GitHub.", 4000);
   } catch (e) {
     showError(String(e?.message || e));
+  } finally {
+    updateExportButtonsState();
   }
-});
-
-btnOpenPrOnGithub?.addEventListener("click", () => {
-  const u = String(lastPrExportMeta?.htmlUrl || "").trim();
-  if (u) void window.snappi?.openExternal?.(u);
 });
 
 sessionPickFeedback?.addEventListener("input", () => {
@@ -2169,6 +2103,27 @@ btnInspectorToggle?.addEventListener("click", async () => {
   syncInspectorSessionCardVisibility();
 });
 
+btnAiAssistantToggle?.addEventListener("click", async () => {
+  if (!window.snappi?.getAiDockVisible || !window.snappi?.setAiDockVisible) return;
+  let cur = false;
+  try {
+    const r = await window.snappi.getAiDockVisible();
+    cur = Boolean(r?.visible);
+  } catch {
+    cur = false;
+  }
+  const next = !cur;
+  try {
+    await window.snappi.setAiDockVisible(next);
+  } catch {
+    showError("Could not toggle AI assistant.");
+    return;
+  }
+  localStorage.setItem(AI_DOCK_VISIBLE_KEY, next ? "1" : "0");
+  updateAiDockToggleUi(next);
+  showError("");
+});
+
 function startDesktopConfigProbe() {
   if (!window.snappi?.getConfig) return;
   void window.snappi.getConfig().then((cfg) => {
@@ -2181,13 +2136,10 @@ async function boot() {
   initUiMode();
 
   if (!isDesktopShell) {
-    if (uiReviewCard) uiReviewCard.hidden = true;
     if (inspectorExportWrap) inspectorExportWrap.hidden = true;
   }
 
   if (isDesktopShell) {
-    initUiReviewManualList();
-    initUiReviewViewportHandlers();
     startDesktopConfigProbe();
     renderSessionList();
     syncInspectorSessionCardVisibility();
@@ -2203,39 +2155,66 @@ async function boot() {
       /* ignore */
     }
     window.snappi?.onInspectorPick?.((payload) => {
-      lastPfInsightsForExport = null;
-      lastSyncPfDescribe = null;
-      lastUiReviewHints = { items: [], viewport: null };
-      lastPfAuditPayload = { loading: true };
       pendingPick = payload;
-      resetManualChecklistUi();
-      if (pfInsightsPanel) pfInsightsPanel.hidden = false;
-      if (pfInsightsStatus) {
-        pfInsightsStatus.hidden = false;
-        pfInsightsStatus.className =
-          "pf-insights__status pf-insights__status--info";
-        pfInsightsStatus.textContent = "Running PatternFly MCP…";
-      }
       renderPendingPickUi(payload);
       syncPendingPickUi();
       syncInspectorSessionCardVisibility();
       updateExportButtonsState();
-      void hydratePfDescribeForPick();
-      refreshIssuesPanel();
-      refreshPassesPanel();
       sessionPickFeedback?.focus();
     });
-    window.snappi?.onUiReviewHints?.((payload) => {
-      lastUiReviewHints = {
-        items: Array.isArray(payload?.items) ? payload.items : [],
-        viewport: payload?.viewport || null,
-      };
-      refreshIssuesPanel();
-      refreshHandoffDraft();
-    });
+
     window.snappi?.onPatternFlyInsights?.((payload) => {
-      renderPatternFlyInsights(payload);
-      updateExportButtonsState();
+      lastPfInsightPayload = payload || {};
+      if (pendingPick) {
+        renderSystemVerdictStrip(pendingPick, lastPfInsightPayload);
+      }
+    });
+
+    btnInspectorToggleAllProps?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      inspectorSemanticShowAll = !inspectorSemanticShowAll;
+      btnInspectorToggleAllProps.setAttribute(
+        "aria-pressed",
+        inspectorSemanticShowAll ? "true" : "false"
+      );
+      btnInspectorToggleAllProps.textContent = inspectorSemanticShowAll
+        ? "Issues only"
+        : "Show all properties";
+      if (pendingPick) renderInspectorSemanticCards(pendingPick);
+    });
+
+    btnInspectorGitLoad?.addEventListener("click", async () => {
+      const fn = inspectorGitFile?.value?.trim();
+      if (!fn || !window.snappi?.gitFileHistory) return;
+      if (inspectorAuditContext) {
+        inspectorAuditContext.innerHTML =
+          '<p class="inspector-audit-empty">Loading…</p>';
+      }
+      try {
+        const r = await window.snappi.gitFileHistory({
+          filename: fn,
+          limit: 20,
+        });
+        if (!r?.ok) {
+          if (inspectorAuditContext) {
+            inspectorAuditContext.innerHTML = `<p class="inspector-audit-empty">${escapeHtml(
+              r?.error || "Request failed."
+            )}</p>`;
+          }
+          return;
+        }
+        const entries = Array.isArray(r.entries) ? r.entries : [];
+        if (inspectorAuditContext) {
+          inspectorAuditContext.innerHTML = formatAuditEntriesHtml(entries);
+        }
+      } catch (e) {
+        if (inspectorAuditContext) {
+          inspectorAuditContext.innerHTML = `<p class="inspector-audit-empty">${escapeHtml(
+            String(e?.message || e)
+          )}</p>`;
+        }
+      }
     });
 
     syncPrHighlightSwitchAria();
