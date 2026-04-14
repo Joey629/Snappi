@@ -21,7 +21,7 @@ Use it when you want to see **what the PR actually does in the browser** without
 
 Prebuilt artifacts are produced with **electron-builder** (see [Build](#build-from-source)).
 
-- **macOS (Apple Silicon, arm64)** — Grab **`Snappi-*-arm64.dmg`** or **`*-arm64-mac.zip`** from [GitHub Releases](https://github.com/yxing/snappi/releases) (update the org/name if you fork).
+- **macOS (Apple Silicon, arm64)** — Grab **`Snappi-*-arm64.dmg`** or **`*-arm64-mac.zip`** from [GitHub Releases](https://github.com/Joey629/Snappi/releases).
 - **First launch (macOS)** — Unsigned builds may trigger **Gatekeeper**. Right-click the app → **Open**, or use **System Settings → Privacy & Security** to allow it once. For distribution to others, set up **Apple Developer ID** signing and notarization (see [electron.build code signing](https://www.electron.build/code-signing)).
 
 **Intel Mac / Windows / Linux** — Run `npm run dist` on the target OS or use CI (e.g. matrix build) to generate `x64` installers; this repo’s default `dist/` output on an arm64 Mac is **arm64** only unless you configure targets or build on other runners.
@@ -38,7 +38,7 @@ Prebuilt artifacts are produced with **electron-builder** (see [Build](#build-fr
 ### Clone and run from source
 
 ```bash
-git clone https://github.com/yxing/snappi.git
+git clone https://github.com/Joey629/Snappi.git
 cd snappi
 npm install
 cp .env.example .env   # optional: configure AI / GitHub

@@ -194,7 +194,7 @@ Follow-up for ${meta.htmlUrl || prUrl} (#${meta.pull}).
   const headParam = sameRepo ? branchName : `${meta.headOwnerLogin}:${branchName}`;
   const createUrl = `https://api.github.com/repos/${meta.owner}/${meta.repo}/pulls`;
   const prTitle = `Snappi AI fixup for #${meta.pull}`;
-  const prBody = `Automated follow-up from [Snappi](https://github.com/) preview / AI assistant.
+  const prBody = `Automated follow-up from [Snappi](https://github.com/Joey629/Snappi) preview / AI assistant.
 
 - Related PR: ${meta.htmlUrl || prUrl}
 - Original PR title: ${meta.title || "(untitled)"}
